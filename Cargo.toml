@@ -17,14 +17,22 @@ license = "MIT"
 [workspace.dependencies]
 anyhow = "1"
 axum = "0.7"
+axum-extra = { version = "0.9", features = ["cookie"] }
+base64 = "0.22"
 bella-core = { path = "crates/core" }
 bella-db = { path = "crates/db" }
+chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "migrate"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+time = "=0.3.36"
 uuid = { version = "1", features = ["serde", "v4"] }
+webbrowser = "1"
