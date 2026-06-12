@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: bella
+      POSTGRES_USER: bella
+      POSTGRES_PASSWORD: bella
+    ports:
+      - "5432:5432"
+    volumes:
+      - bella-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bella -d bella"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgweb:
+    image: sosedoff/pgweb
+    ports:
+      - "8081:8081"
+    environment:
+      PGWEB_DATABASE_URL: postgres://bella:bella@postgres:5432/bella?sslmode=disable
+    depends_on:
+      - postgres
+
+volumes:
+  bella-postgres:

@@ -1,0 +1,2 @@
+-- Bella database baseline.
+-- Add application tables here as the product model settles.

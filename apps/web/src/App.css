@@ -1,0 +1,49 @@
+.shell {
+  min-height: 100svh;
+  display: grid;
+  align-content: center;
+  gap: 48px;
+  padding: 64px 24px;
+  box-sizing: border-box;
+}
+
+.hero {
+  max-width: 760px;
+}
+
+.eyebrow {
+  margin: 0 0 16px;
+  color: var(--accent);
+  font: 700 13px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.lede {
+  max-width: 640px;
+  font-size: 22px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.cards article {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 24px;
+  background: var(--panel);
+}
+
+@media (max-width: 760px) {
+  .shell {
+    gap: 32px;
+    padding-block: 40px;
+  }
+
+  .cards {
+    grid-template-columns: 1fr;
+  }
+}

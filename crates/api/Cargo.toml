@@ -1,0 +1,16 @@
+[package]
+name = "bella-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+bella-core.workspace = true
+bella-db.workspace = true
+dotenvy.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

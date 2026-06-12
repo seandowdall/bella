@@ -1,0 +1,8 @@
+/target
+/.build
+**/.build
+node_modules
+dist
+
+.env
+.DS_Store

@@ -1,0 +1,13 @@
+openapi: 3.1.0
+info:
+  title: Bella API
+  version: 0.1.0
+paths:
+  /health:
+    get:
+      summary: Check API and database health
+      responses:
+        "200":
+          description: API and database are healthy
+        "503":
+          description: API is running but a dependency is unavailable
