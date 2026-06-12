@@ -33,6 +33,8 @@ postgres://bella:bella@127.0.0.1:5432/bella
 
 ## Local Development
 
+See the [initial setup guide](apps/docs/README.md#initial-setup) to configure your local environment.
+
 ```sh
 just dev
 ```
