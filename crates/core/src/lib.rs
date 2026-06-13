@@ -4,6 +4,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Organization {
     pub id: OrganizationId,
+    pub slug: String,
     pub name: String,
 }
 
@@ -14,11 +15,26 @@ pub struct OrganizationId(pub Uuid);
 pub struct Workspace {
     pub id: WorkspaceId,
     pub organization_id: OrganizationId,
+    pub slug: String,
     pub name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WorkspaceId(pub Uuid);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrganizationMembership {
+    pub organization_id: OrganizationId,
+    pub role: OrganizationRole,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationRole {
+    Owner,
+    Admin,
+    Member,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderAccount {
@@ -36,7 +52,23 @@ pub struct ProviderAccountId(pub Uuid);
 pub enum AiProvider {
     Anthropic,
     OpenAi,
-    Google,
+    GoogleAi,
+    VertexAi,
+    AzureOpenAi,
+    AwsBedrock,
+    Mistral,
+    DeepSeek,
+    Cohere,
+    Groq,
+    Together,
+    Fireworks,
+    XAi,
+    Perplexity,
+    OpenRouter,
+    Cerebras,
+    Replicate,
+    HuggingFace,
+    CloudflareWorkersAi,
     Other,
 }
 
