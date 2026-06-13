@@ -23,6 +23,9 @@ api:
 web:
     bun run --cwd apps/web dev
 
+site:
+    bun run --cwd apps/site dev
+
 cli *args:
     cargo run -p bella-cli -- {{args}}
 
