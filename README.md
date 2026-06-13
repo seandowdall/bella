@@ -11,7 +11,8 @@ crates/db        Postgres connection, migrations, and query helpers
 crates/cli       Local command-line client
 crates/mcp       MCP server placeholder
 crates/worker    Async job worker placeholder
-apps/web         Vite/React dashboard
+apps/web         Vite/React dashboard for app.bellalabs.ai
+apps/site        Vite landing page for bellalabs.ai
 apps/docs        Contributor and self-hosting documentation
 packages/openapi API contract placeholder
 packages/*       Shared package placeholders
@@ -43,7 +44,8 @@ Useful commands:
 just docker       # start Docker services
 just pgweb        # start pgweb
 just api          # run the Axum API
-just web          # run the Vite dashboard
+just web          # run the Next.js dashboard
+just site         # run the public landing page
 just cli --help   # run the Bella CLI
 just verify       # fmt, check, clippy, test
 just stop         # stop Docker services
@@ -70,7 +72,17 @@ Copy `.env.example` to `.env`, then set:
 ```text
 GITHUB_OAUTH_CLIENT_ID=...
 GITHUB_OAUTH_CLIENT_SECRET=...
+BELLA_CREDENTIAL_ENCRYPTION_KEY=...
 ```
+
+Generate the provider credential encryption key once with:
+
+```sh
+openssl rand -base64 32
+```
+
+Keep this key stable and secret. Rotating it requires re-encrypting stored
+provider credentials.
 
 Run the API and web app:
 
@@ -93,6 +105,51 @@ Full setup guides:
 
 - [Contributor OAuth setup](apps/docs/contributors/github-oauth.md)
 - [Self-hosted OAuth setup](apps/docs/self-hosting/github-oauth.md)
+
+## Organizations
+
+Every user receives a default organization and workspace on first login.
+Additional organizations can be created from the dashboard or CLI:
+
+```sh
+just cli organizations list
+just cli organizations create --name "Acme AI"
+just cli --json organizations list
+```
+
+Provider connections are available from the dashboard and CLI. When your user
+belongs to one organization, the account list selects it automatically:
+
+```sh
+# Supported provider types:
+just cli providers catalog
+
+# Accounts connected in the web UI or CLI:
+just cli providers accounts
+just cli providers accounts --organization <organization-id>
+
+printf '%s' "$PROVIDER_API_KEY" | just cli providers connect \
+  --organization <organization-id> \
+  --workspace <workspace-id> \
+  --provider mistral \
+  --name production \
+  --secret-stdin
+just cli providers disconnect \
+  --organization <organization-id> \
+  --account <provider-account-id>
+```
+
+All provider commands support the global `--json` flag. Provider secrets are
+sent to the API for encrypted storage and are never written to the local Bella
+CLI credential file.
+
+Bella automatically validates OpenAI and Anthropic admin credentials against
+their organization usage APIs. Mistral and DeepSeek credentials are validated
+against read-only model-list endpoints. Other provider types remain explicitly
+`saved_unverified` until a provider-specific validator is implemented.
+
+See the [multi-tenant architecture](apps/docs/architecture/multi-tenancy.md)
+for tenant boundaries, roles, natural keys, and idempotency behavior.
 
 ## License
 

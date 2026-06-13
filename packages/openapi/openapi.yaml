@@ -5,9 +5,441 @@ info:
 paths:
   /health:
     get:
+      operationId: getHealth
       summary: Check API and database health
       responses:
         "200":
           description: API and database are healthy
         "503":
           description: API is running but a dependency is unavailable
+  /v1/me:
+    get:
+      operationId: getCurrentUser
+      summary: Return the authenticated user
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/organizations:
+    get:
+      operationId: listOrganizations
+      summary: List organizations available to the authenticated user
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Organization memberships
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Organization"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createOrganization
+      summary: Create an organization and default workspace
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+      responses:
+        "201":
+          description: Organization created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+        "200":
+          description: Existing result for a repeated idempotent request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/providers:
+    get:
+      operationId: listProviders
+      summary: List supported provider connection types
+      responses:
+        "200":
+          description: Provider catalog
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProviderDefinition"
+  /v1/organizations/{organization_id}/provider-accounts:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      operationId: listProviderAccounts
+      summary: List provider accounts for an organization
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Provider accounts with secret metadata only
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProviderAccount"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: connectProviderAccount
+      summary: Create or rotate an encrypted provider credential
+      description: >
+        Upserts by workspace, provider, and display name. Credential values are
+        encrypted at rest and are never returned by the API.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - workspace_id
+                - provider
+                - display_name
+                - credentials
+              properties:
+                workspace_id:
+                  type: string
+                  format: uuid
+                provider:
+                  type: string
+                display_name:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+                credentials:
+                  type: object
+                  required:
+                    - secret
+                  additionalProperties:
+                    type: string
+                  properties:
+                    secret:
+                      type: string
+                      minLength: 1
+                      writeOnly: true
+      responses:
+        "200":
+          description: Provider account saved after automatic validation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderAccount"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/organizations/{organization_id}/provider-accounts/{account_id}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: account_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      operationId: updateProviderAccount
+      summary: Update provider account metadata without accessing its credential
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - display_name
+              properties:
+                display_name:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+      responses:
+        "200":
+          description: Provider account metadata updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderAccount"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: disconnectProviderAccount
+      summary: Delete a provider account and its encrypted credential
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "204":
+          description: Provider account disconnected
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  parameters:
+    OrganizationId:
+      name: organization_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: bella_session
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Organization administrator access required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found or unavailable to the caller
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Request conflicts with existing data
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    User:
+      type: object
+      required:
+        - id
+        - github_login
+      properties:
+        id:
+          type: string
+          format: uuid
+        github_login:
+          type: string
+        name:
+          type:
+            - string
+            - "null"
+        avatar_url:
+          type:
+            - string
+            - "null"
+          format: uri
+    Workspace:
+      type: object
+      required:
+        - id
+        - slug
+        - name
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+    Organization:
+      type: object
+      required:
+        - id
+        - slug
+        - name
+        - role
+        - default_workspace
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum:
+            - owner
+            - admin
+            - member
+        default_workspace:
+          $ref: "#/components/schemas/Workspace"
+    ProviderDefinition:
+      type: object
+      required:
+        - id
+        - name
+        - category
+        - ingestion
+        - credential_label
+        - credential_placeholder
+        - docs_url
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        ingestion:
+          type: string
+          enum:
+            - usage_api
+            - cloud_billing
+            - connection_only
+        credential_label:
+          type: string
+        credential_placeholder:
+          type: string
+        docs_url:
+          type: string
+          format: uri
+    ProviderAccount:
+      type: object
+      required:
+        - id
+        - organization_id
+        - workspace_id
+        - workspace_name
+        - provider
+        - display_name
+        - credential_fingerprint
+        - status
+        - validated_at
+        - validation_error
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        workspace_name:
+          type: string
+        provider:
+          type: string
+        display_name:
+          type: string
+        credential_fingerprint:
+          type: string
+          description: Non-secret short SHA-256 fingerprint
+        status:
+          type: string
+          enum:
+            - saved_unverified
+            - verified
+            - invalid_credentials
+            - insufficient_permissions
+            - validation_unavailable
+            - disabled
+        validated_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        validation_error:
+          type:
+            - string
+            - "null"
+        last_synced_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
