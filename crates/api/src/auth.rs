@@ -21,8 +21,8 @@ const OAUTH_BROWSER_COOKIE: &str = "bella_oauth_browser";
 
 #[derive(Debug, Serialize)]
 pub struct AuthUser {
-    id: Uuid,
-    github_login: String,
+    pub(crate) id: Uuid,
+    pub(crate) github_login: String,
     name: Option<String>,
     avatar_url: Option<String>,
 }
@@ -132,6 +132,7 @@ pub async fn callback(
     }
     let github_user = fetch_github_user(&state, &query.code).await?;
     let user = upsert_user(&state, github_user).await?;
+    crate::organizations::ensure_default_organization(&state, &user).await?;
 
     match flow.flow_kind.as_str() {
         "web" => {
@@ -203,14 +204,21 @@ pub async fn me(
     jar: CookieJar,
     headers: HeaderMap,
 ) -> Result<Json<AuthUser>, AuthError> {
-    let token = bearer_token(&headers)
+    Ok(Json(authenticated_user(&state, &jar, &headers).await?))
+}
+
+pub async fn authenticated_user(
+    state: &AppState,
+    jar: &CookieJar,
+    headers: &HeaderMap,
+) -> Result<AuthUser, AuthError> {
+    let token = bearer_token(headers)
         .or_else(|| {
             jar.get(SESSION_COOKIE)
                 .map(|cookie| cookie.value().to_owned())
         })
         .ok_or(AuthError::Unauthorized)?;
-    let user = find_user_by_token(&state, &token).await?;
-    Ok(Json(user))
+    find_user_by_token(state, &token).await
 }
 
 pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> Result<CookieJar, AuthError> {

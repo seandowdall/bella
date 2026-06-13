@@ -1,10 +1,14 @@
 mod auth;
+mod credentials;
+mod organizations;
+mod provider_accounts;
+mod provider_validation;
 
 use axum::{
     Json, Router,
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, patch, post},
 };
 use bella_db::DbPool;
 use serde::Serialize;
@@ -16,6 +20,8 @@ use tracing_subscriber::{EnvFilter, fmt};
 struct AppState {
     db: DbPool,
     config: Config,
+    credential_cipher: credentials::CredentialCipher,
+    provider_client: reqwest::Client,
 }
 
 #[derive(Clone)]
@@ -96,6 +102,12 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "127.0.0.1:3000".to_string())
         .parse()?;
     let config = Config::from_env()?;
+    let credential_cipher = credentials::CredentialCipher::from_base64(&required_env(
+        "BELLA_CREDENTIAL_ENCRYPTION_KEY",
+    )?)?;
+    let provider_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
 
     let db = bella_db::connect(&database_url).await?;
     bella_db::run_migrations(&db).await?;
@@ -109,7 +121,25 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/auth/cli/start", post(auth::cli_start))
         .route("/v1/auth/cli/poll", post(auth::cli_poll))
         .route("/v1/me", get(auth::me))
-        .with_state(AppState { db, config });
+        .route(
+            "/v1/organizations",
+            get(organizations::list).post(organizations::create),
+        )
+        .route("/v1/providers", get(provider_accounts::catalog))
+        .route(
+            "/v1/organizations/:organization_id/provider-accounts",
+            get(provider_accounts::list).post(provider_accounts::upsert),
+        )
+        .route(
+            "/v1/organizations/:organization_id/provider-accounts/:account_id",
+            patch(provider_accounts::update).delete(provider_accounts::delete),
+        )
+        .with_state(AppState {
+            db,
+            config,
+            credential_cipher,
+            provider_client,
+        });
 
     let listener = TcpListener::bind(bind_addr).await?;
     tracing::info!("bella-api listening on http://{bind_addr}");
@@ -154,9 +184,6 @@ async fn shutdown_signal() {
             .recv()
             .await;
     };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
 
     tokio::select! {
         () = ctrl_c => {},
