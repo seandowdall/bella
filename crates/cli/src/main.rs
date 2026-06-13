@@ -1,5 +1,7 @@
 use std::{
+    collections::BTreeMap,
     env, fs,
+    io::{self, Read},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -31,6 +33,9 @@ struct Cli {
 enum Command {
     /// Print the configured API base URL and authentication status.
     Config,
+    /// List provider types supported by this Bella server.
+    #[command(hide = true)]
+    Catalog,
     /// Log in through GitHub in a browser.
     Login {
         #[arg(long, help = "Print the login URL instead of opening a browser")]
@@ -40,6 +45,68 @@ enum Command {
     Whoami,
     /// Delete the locally stored CLI credential.
     Logout,
+    /// Manage organizations.
+    Organizations {
+        #[command(subcommand)]
+        command: OrganizationCommand,
+    },
+    /// Manage AI provider connections.
+    Providers {
+        #[command(subcommand)]
+        command: ProviderCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum OrganizationCommand {
+    /// List organizations available to the current user.
+    List,
+    /// Create an organization with a default workspace.
+    Create {
+        #[arg(long)]
+        name: String,
+        #[arg(long, help = "Stable retry key; generated automatically when omitted")]
+        idempotency_key: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ProviderCommand {
+    /// List provider types supported by this Bella server.
+    Catalog,
+    /// List connected provider accounts for an organization.
+    #[command(visible_alias = "accounts")]
+    List {
+        #[arg(long)]
+        organization: Option<String>,
+    },
+    /// Connect or rotate a provider account credential.
+    Connect {
+        #[arg(long)]
+        organization: String,
+        #[arg(long)]
+        workspace: String,
+        #[arg(long)]
+        provider: String,
+        #[arg(long)]
+        name: String,
+        #[arg(
+            long,
+            env = "BELLA_PROVIDER_SECRET",
+            hide_env_values = true,
+            help = "Provider credential; prefer BELLA_PROVIDER_SECRET or --secret-stdin"
+        )]
+        secret: Option<String>,
+        #[arg(long, help = "Read the provider credential from standard input")]
+        secret_stdin: bool,
+    },
+    /// Disconnect a provider account and delete its encrypted credential.
+    Disconnect {
+        #[arg(long)]
+        organization: String,
+        #[arg(long)]
+        account: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,6 +121,49 @@ struct User {
     github_login: String,
     name: Option<String>,
     avatar_url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Organization {
+    id: String,
+    slug: String,
+    name: String,
+    role: String,
+    default_workspace: Workspace,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Workspace {
+    id: String,
+    slug: String,
+    name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ProviderDefinition {
+    id: String,
+    name: String,
+    category: String,
+    ingestion: String,
+    credential_label: String,
+    credential_placeholder: String,
+    docs_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ProviderAccount {
+    id: String,
+    organization_id: String,
+    workspace_id: String,
+    workspace_name: String,
+    provider: String,
+    display_name: String,
+    credential_fingerprint: String,
+    status: String,
+    validated_at: Option<String>,
+    validation_error: Option<String>,
+    last_synced_at: Option<String>,
+    created_at: String,
 }
 
 #[derive(Serialize)]
@@ -82,6 +192,19 @@ struct LoginPollRequest<'a> {
     poll_secret: &'a str,
 }
 
+#[derive(Serialize)]
+struct CreateOrganizationRequest<'a> {
+    name: &'a str,
+}
+
+#[derive(Serialize)]
+struct ConnectProviderRequest<'a> {
+    workspace_id: &'a str,
+    provider: &'a str,
+    display_name: &'a str,
+    credentials: BTreeMap<&'static str, &'a str>,
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 enum LoginPollResponse {
@@ -108,6 +231,13 @@ async fn main() -> anyhow::Result<()> {
                     output.api_base_url, output.authenticated, output.credentials_path
                 )
             })?;
+        }
+        Command::Catalog => {
+            eprintln!(
+                "Note: `bella catalog` lists supported provider types. \
+                 Use `bella providers accounts` to list connected accounts."
+            );
+            print_provider_catalog(&cli.api_base_url, cli.json).await?;
         }
         Command::Login { no_open } => {
             login(&cli.api_base_url, &credentials_path, no_open, cli.json).await?;
@@ -138,9 +268,172 @@ async fn main() -> anyhow::Result<()> {
                 println!("Logged out.");
             }
         }
+        Command::Organizations { command } => {
+            let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+            match command {
+                OrganizationCommand::List => {
+                    let organizations =
+                        list_organizations(&cli.api_base_url, &credentials.token).await?;
+                    print_value(&organizations, cli.json, || {
+                        organizations
+                            .iter()
+                            .map(|organization| {
+                                format!(
+                                    "{}\t{}\t{}\t{}",
+                                    organization.slug,
+                                    organization.name,
+                                    organization.role,
+                                    organization.default_workspace.slug
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })?;
+                }
+                OrganizationCommand::Create {
+                    name,
+                    idempotency_key,
+                } => {
+                    let idempotency_key = idempotency_key.unwrap_or_else(random_secret);
+                    let organization = create_organization(
+                        &cli.api_base_url,
+                        &credentials.token,
+                        &name,
+                        &idempotency_key,
+                    )
+                    .await?;
+                    print_value(&organization, cli.json, || {
+                        format!(
+                            "Created {} ({}) with workspace {}.",
+                            organization.name,
+                            organization.slug,
+                            organization.default_workspace.slug
+                        )
+                    })?;
+                }
+            }
+        }
+        Command::Providers { command } => match command {
+            ProviderCommand::Catalog => {
+                print_provider_catalog(&cli.api_base_url, cli.json).await?;
+            }
+            ProviderCommand::List { organization } => {
+                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let organization =
+                    resolve_organization_id(&cli.api_base_url, &credentials.token, organization)
+                        .await?;
+                let accounts =
+                    list_provider_accounts(&cli.api_base_url, &credentials.token, &organization)
+                        .await?;
+                print_value(&accounts, cli.json, || {
+                    accounts
+                        .iter()
+                        .map(|account| {
+                            format!(
+                                "{}\t{}\t{}\t{}\t{}",
+                                account.id,
+                                account.provider,
+                                account.display_name,
+                                account.workspace_name,
+                                account.status
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })?;
+            }
+            ProviderCommand::Connect {
+                organization,
+                workspace,
+                provider,
+                name,
+                secret,
+                secret_stdin,
+            } => {
+                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let secret = read_provider_secret(secret, secret_stdin)?;
+                let account = connect_provider(
+                    &cli.api_base_url,
+                    &credentials.token,
+                    &organization,
+                    &workspace,
+                    &provider,
+                    &name,
+                    &secret,
+                )
+                .await?;
+                print_value(&account, cli.json, || {
+                    format!(
+                        "Connected {} account {} ({}) in workspace {}.",
+                        account.provider, account.display_name, account.id, account.workspace_name
+                    )
+                })?;
+            }
+            ProviderCommand::Disconnect {
+                organization,
+                account,
+            } => {
+                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                disconnect_provider(
+                    &cli.api_base_url,
+                    &credentials.token,
+                    &organization,
+                    &account,
+                )
+                .await?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::json!({ "disconnected": true, "account_id": account })
+                    );
+                } else {
+                    println!("Disconnected provider account {account}.");
+                }
+            }
+        },
     }
 
     Ok(())
+}
+
+async fn print_provider_catalog(api_base_url: &str, json: bool) -> anyhow::Result<()> {
+    let providers = list_provider_catalog(api_base_url).await?;
+    print_value(&providers, json, || {
+        providers
+            .iter()
+            .map(|provider| {
+                format!(
+                    "{}\t{}\t{}\t{}",
+                    provider.id, provider.name, provider.category, provider.ingestion
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
+}
+
+async fn resolve_organization_id(
+    api_base_url: &str,
+    token: &str,
+    organization: Option<String>,
+) -> anyhow::Result<String> {
+    if let Some(organization) = organization {
+        return Ok(organization);
+    }
+
+    let organizations = list_organizations(api_base_url, token).await?;
+    match organizations.as_slice() {
+        [organization] => Ok(organization.id.clone()),
+        [] => bail!("no organizations found; create one before connecting providers"),
+        _ => {
+            let choices = organizations
+                .iter()
+                .map(|organization| format!("{} ({})", organization.id, organization.name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!("multiple organizations found; pass --organization <id>. Available: {choices}")
+        }
+    }
 }
 
 async fn login(
@@ -250,6 +543,164 @@ async fn revoke_token(api_base_url: &str, token: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn list_organizations(api_base_url: &str, token: &str) -> anyhow::Result<Vec<Organization>> {
+    Client::new()
+        .get(format!(
+            "{}/v1/organizations",
+            api_base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("failed to contact Bella API")?
+        .error_for_status()
+        .context("Bella API rejected the organization list request")?
+        .json()
+        .await
+        .context("Bella API returned an invalid organization list")
+}
+
+async fn create_organization(
+    api_base_url: &str,
+    token: &str,
+    name: &str,
+    idempotency_key: &str,
+) -> anyhow::Result<Organization> {
+    Client::new()
+        .post(format!(
+            "{}/v1/organizations",
+            api_base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .header("Idempotency-Key", idempotency_key)
+        .json(&CreateOrganizationRequest { name })
+        .send()
+        .await
+        .context("failed to contact Bella API")?
+        .error_for_status()
+        .context("Bella API rejected the organization create request")?
+        .json()
+        .await
+        .context("Bella API returned an invalid organization")
+}
+
+async fn list_provider_catalog(api_base_url: &str) -> anyhow::Result<Vec<ProviderDefinition>> {
+    Client::new()
+        .get(format!(
+            "{}/v1/providers",
+            api_base_url.trim_end_matches('/')
+        ))
+        .send()
+        .await
+        .with_context(|| {
+            format!(
+                "failed to contact Bella API at {}; start it with `just api`",
+                api_base_url.trim_end_matches('/')
+            )
+        })?
+        .error_for_status()
+        .context("Bella API rejected the provider catalog request")?
+        .json()
+        .await
+        .context("Bella API returned an invalid provider catalog")
+}
+
+async fn list_provider_accounts(
+    api_base_url: &str,
+    token: &str,
+    organization_id: &str,
+) -> anyhow::Result<Vec<ProviderAccount>> {
+    Client::new()
+        .get(format!(
+            "{}/v1/organizations/{organization_id}/provider-accounts",
+            api_base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("failed to contact Bella API")?
+        .error_for_status()
+        .context("Bella API rejected the provider account list request")?
+        .json()
+        .await
+        .context("Bella API returned an invalid provider account list")
+}
+
+async fn connect_provider(
+    api_base_url: &str,
+    token: &str,
+    organization_id: &str,
+    workspace_id: &str,
+    provider: &str,
+    display_name: &str,
+    secret: &str,
+) -> anyhow::Result<ProviderAccount> {
+    let mut credentials = BTreeMap::new();
+    credentials.insert("secret", secret);
+    Client::new()
+        .post(format!(
+            "{}/v1/organizations/{organization_id}/provider-accounts",
+            api_base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .json(&ConnectProviderRequest {
+            workspace_id,
+            provider,
+            display_name,
+            credentials,
+        })
+        .send()
+        .await
+        .context("failed to contact Bella API")?
+        .error_for_status()
+        .context("Bella API rejected the provider connection request")?
+        .json()
+        .await
+        .context("Bella API returned an invalid provider account")
+}
+
+async fn disconnect_provider(
+    api_base_url: &str,
+    token: &str,
+    organization_id: &str,
+    account_id: &str,
+) -> anyhow::Result<()> {
+    Client::new()
+        .delete(format!(
+            "{}/v1/organizations/{organization_id}/provider-accounts/{account_id}",
+            api_base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("failed to contact Bella API")?
+        .error_for_status()
+        .context("Bella API rejected the provider disconnect request")?;
+    Ok(())
+}
+
+fn read_provider_secret(secret: Option<String>, secret_stdin: bool) -> anyhow::Result<String> {
+    if secret.is_some() && secret_stdin {
+        bail!("use either --secret/BELLA_PROVIDER_SECRET or --secret-stdin, not both");
+    }
+    let secret = if secret_stdin {
+        let mut value = String::new();
+        io::stdin()
+            .read_to_string(&mut value)
+            .context("failed to read provider credential from standard input")?;
+        value
+    } else {
+        secret.context(
+            "provider credential required; set BELLA_PROVIDER_SECRET or use --secret-stdin",
+        )?
+    };
+    let secret = secret.trim().to_owned();
+    if secret.is_empty() {
+        bail!("provider credential must not be empty");
+    }
+    Ok(secret)
+}
+
 fn credentials_path() -> anyhow::Result<PathBuf> {
     let home = env::var_os("HOME").context("HOME is not set")?;
     Ok(PathBuf::from(home)
@@ -308,4 +759,19 @@ where
         println!("{}", human());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_provider_secret;
+
+    #[test]
+    fn provider_secret_rejects_empty_or_conflicting_input() {
+        assert!(read_provider_secret(Some("".to_owned()), false).is_err());
+        assert!(read_provider_secret(Some("secret".to_owned()), true).is_err());
+        assert_eq!(
+            read_provider_secret(Some(" secret \n".to_owned()), false).unwrap(),
+            "secret"
+        );
+    }
 }
