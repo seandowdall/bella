@@ -1,4 +1,3 @@
-import { useMemo, useState } from 'react'
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import {
   Card,
@@ -36,34 +35,34 @@ const ranges = {
   '90d': 90,
 }
 
-function zeroSpendSeries(days: number) {
-  return Array.from({ length: days }, (_, offset) => {
-    const date = new Date()
-    date.setHours(0, 0, 0, 0)
-    date.setDate(date.getDate() - (days - offset - 1))
-    return { date: date.toISOString().slice(0, 10), spend: 0 }
-  })
+export type TimeRange = keyof typeof ranges
+
+export function daysForRange(range: TimeRange) {
+  return ranges[range]
 }
 
-export function ChartAreaInteractive() {
-  const [timeRange, setTimeRange] = useState<keyof typeof ranges>('30d')
-  const chartData = useMemo(
-    () => zeroSpendSeries(ranges[timeRange]),
-    [timeRange],
-  )
+export function ChartAreaInteractive({
+  timeRange,
+  onTimeRangeChange,
+  chartData,
+}: {
+  timeRange: TimeRange
+  onTimeRangeChange: (range: TimeRange) => void
+  chartData: Array<{ date: string; spend: number }>
+}) {
 
   return (
     <Card className="@container/card">
       <CardHeader>
-        <CardTitle>AI spend</CardTitle>
-        <CardDescription>
-          Daily provider costs will appear after the first usage import.
-        </CardDescription>
+          <CardTitle>AI spend</CardTitle>
+          <CardDescription>
+          Daily provider costs from normalized ingestion data.
+          </CardDescription>
         <CardAction>
           <Select
             value={timeRange}
             onValueChange={(value) =>
-              setTimeRange(value as keyof typeof ranges)
+              onTimeRangeChange(value as TimeRange)
             }
           >
             <SelectTrigger size="sm" className="w-36" aria-label="Time range">

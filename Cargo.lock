@@ -324,6 +324,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bella-sandbox"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "bella-worker"
 version = "0.1.0"
 dependencies = [

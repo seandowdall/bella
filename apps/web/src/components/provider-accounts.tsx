@@ -7,6 +7,7 @@ import {
   ExternalLinkIcon,
   MoreHorizontalIcon,
   PencilIcon,
+  RefreshCwIcon,
   Trash2Icon,
 } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -88,6 +89,7 @@ import {
   deleteProviderAccount,
   getProviderAccounts,
   getProviderCatalog,
+  syncProviderAccount,
   updateProviderAccount,
 } from "@/lib/api"
 import type {
@@ -126,6 +128,7 @@ export function ProviderAccounts({
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [syncingAccountId, setSyncingAccountId] = useState("")
   const [error, setError] = useState("")
 
   const canManage =
@@ -234,6 +237,23 @@ export function ProviderAccounts({
     }
   }
 
+  const handleSync = async (account: ProviderAccount) => {
+    if (!organization) return
+    setSyncingAccountId(account.id)
+    setError("")
+    try {
+      await syncProviderAccount(organization.id, account.id)
+      const providerAccounts = await getProviderAccounts(organization.id)
+      setAccounts(
+        providerAccounts.filter((item) => visibleProviderIds.has(item.provider)),
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not sync provider account.")
+    } finally {
+      setSyncingAccountId("")
+    }
+  }
+
   return (
     <>
       <Card>
@@ -309,6 +329,14 @@ export function ProviderAccounts({
                               {account.validation_error}
                             </p>
                           )}
+                          {account.last_sync_error && (
+                            <p className="mt-1 max-w-64 text-xs text-destructive">
+                              {account.last_sync_error}
+                            </p>
+                          )}
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Last sync {formatDateTime(account.last_synced_at)}
+                          </p>
                         </TableCell>
                         <TableCell>
                           <DropdownMenu>
@@ -326,6 +354,24 @@ export function ProviderAccounts({
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuGroup>
+                                <DropdownMenuItem
+                                  disabled={
+                                    account.provider !== "openai" ||
+                                    account.status !== "verified" ||
+                                    syncingAccountId === account.id
+                                  }
+                                  onSelect={(event) => {
+                                    event.preventDefault()
+                                    void handleSync(account)
+                                  }}
+                                >
+                                  {syncingAccountId === account.id ? (
+                                    <Spinner />
+                                  ) : (
+                                    <RefreshCwIcon />
+                                  )}
+                                  Sync now
+                                </DropdownMenuItem>
                                 <DropdownMenuItem
                                   onSelect={() => openEdit(account)}
                                 >
@@ -573,4 +619,14 @@ export function ProviderAccounts({
       </AlertDialog>
     </>
   )
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return "never"
+  return new Date(value).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  })
 }

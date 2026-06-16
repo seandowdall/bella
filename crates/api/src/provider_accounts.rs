@@ -334,7 +334,13 @@ pub async fn upsert(
         .encrypt(&plaintext)
         .map_err(|_| ProviderAccountError::Encryption)?;
     let fingerprint = credentials::fingerprint(secret);
-    let validation = provider_validation::validate(&state.provider_client, &provider, secret).await;
+    let validation = provider_validation::validate(
+        &state.provider_client,
+        &provider,
+        secret,
+        &state.config.openai_base_url,
+    )
+    .await;
     let account_id = Uuid::new_v4();
 
     let row = sqlx::query(

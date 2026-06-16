@@ -2,6 +2,8 @@ import type {
   Organization,
   ProviderAccount,
   ProviderDefinition,
+  SyncOutcome,
+  UsageSummary,
   User,
 } from "@/lib/dashboard-types"
 
@@ -100,6 +102,17 @@ export async function connectProviderAccount({
   return body as ProviderAccount
 }
 
+async function errorMessage(response: Response, fallback: string) {
+  const text = await response.text()
+  if (!text) return fallback
+  try {
+    const body = JSON.parse(text) as { error?: string }
+    return body.error ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
 export async function deleteProviderAccount(
   organizationId: string,
   accountId: string,
@@ -112,8 +125,9 @@ export async function deleteProviderAccount(
     },
   )
   if (!response.ok) {
-    const body = await response.json()
-    throw new Error(body.error ?? "Could not disconnect the provider.")
+    throw new Error(
+      await errorMessage(response, "Could not disconnect the provider."),
+    )
   }
 }
 
@@ -136,6 +150,44 @@ export async function updateProviderAccount(
     throw new Error(body.error ?? "Could not update the provider account.")
   }
   return body as ProviderAccount
+}
+
+export async function syncProviderAccount(
+  organizationId: string,
+  accountId: string,
+): Promise<SyncOutcome> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/provider-accounts/${accountId}/sync`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  )
+  const body = await response.json()
+  if (!response.ok) {
+    throw new Error(body.error ?? "Could not sync provider account.")
+  }
+  return body as SyncOutcome
+}
+
+export async function getUsageSummary({
+  organizationId,
+  start,
+  end,
+}: {
+  organizationId: string
+  start: string
+  end: string
+}): Promise<UsageSummary> {
+  const params = new URLSearchParams({ start, end })
+  const response = await fetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/usage/summary?${params}`,
+    { credentials: "include" },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not load usage summary."))
+  }
+  return response.json() as Promise<UsageSummary>
 }
 
 export function getLoginUrl(): string {
