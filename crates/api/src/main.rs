@@ -31,6 +31,7 @@ struct Config {
     public_api_url: String,
     web_url: String,
     secure_cookies: bool,
+    openai_base_url: String,
 }
 
 impl Config {
@@ -41,6 +42,8 @@ impl Config {
             .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
         let web_url =
             env::var("BELLA_WEB_URL").unwrap_or_else(|_| "http://127.0.0.1:5173".to_string());
+        let openai_base_url =
+            env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com".to_string());
 
         let public_api = reqwest::Url::parse(&public_api_url)
             .map_err(|error| anyhow::anyhow!("invalid BELLA_PUBLIC_API_URL: {error}"))?;
@@ -69,6 +72,7 @@ impl Config {
             public_api_url,
             web_url,
             secure_cookies,
+            openai_base_url,
         })
     }
 }
@@ -133,6 +137,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/organizations/:organization_id/provider-accounts/:account_id",
             patch(provider_accounts::update).delete(provider_accounts::delete),
+        )
+        .route(
+            "/v1/organizations/:organization_id/provider-accounts/:account_id/sync",
+            post(provider_accounts::sync_now),
         )
         .with_state(AppState {
             db,

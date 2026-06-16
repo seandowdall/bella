@@ -4,6 +4,7 @@ members = [
     "crates/cli",
     "crates/core",
     "crates/db",
+    "crates/ingestion",
     "crates/mcp",
     "crates/worker",
 ]
@@ -22,6 +23,7 @@ axum-extra = { version = "0.9", features = ["cookie"] }
 base64 = "0.22"
 bella-core = { path = "crates/core" }
 bella-db = { path = "crates/db" }
+bella-ingestion = { path = "crates/ingestion" }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"

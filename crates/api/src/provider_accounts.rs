@@ -235,6 +235,8 @@ pub struct ProviderAccountResponse {
     validated_at: Option<chrono::DateTime<chrono::Utc>>,
     validation_error: Option<String>,
     last_synced_at: Option<chrono::DateTime<chrono::Utc>>,
+    next_sync_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_sync_error: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -266,7 +268,8 @@ pub async fn list(
     let rows = sqlx::query(
         "select p.id, p.organization_id, p.workspace_id, w.name as workspace_name,
                 p.provider, p.display_name, p.credential_fingerprint, p.status,
-                p.validated_at, p.validation_error, p.last_synced_at, p.created_at
+                p.validated_at, p.validation_error, p.last_synced_at,
+                p.next_sync_at, p.last_sync_error, p.created_at
          from provider_accounts p
          join workspaces w on w.id = p.workspace_id
          where p.organization_id = $1
@@ -351,7 +354,8 @@ pub async fn upsert(
          returning id, organization_id, workspace_id,
                    (select name from workspaces where id = workspace_id) as workspace_name,
                    provider, display_name, credential_fingerprint, status,
-                   validated_at, validation_error, last_synced_at, created_at",
+                    validated_at, validation_error, last_synced_at,
+                    next_sync_at, last_sync_error, created_at",
     )
     .bind(account_id)
     .bind(organization_id)
@@ -434,7 +438,8 @@ pub async fn update(
          returning p.id, p.organization_id, p.workspace_id,
                    w.name as workspace_name, p.provider, p.display_name,
                    p.credential_fingerprint, p.status, p.validated_at,
-                   p.validation_error, p.last_synced_at, p.created_at",
+                    p.validation_error, p.last_synced_at, p.next_sync_at,
+                    p.last_sync_error, p.created_at",
     )
     .bind(display_name)
     .bind(account_id)
@@ -444,6 +449,52 @@ pub async fn update(
     .ok_or(ProviderAccountError::NotFound)?;
 
     Ok(Json(account_from_row(&row)?))
+}
+
+pub async fn sync_now(
+    State(state): State<AppState>,
+    Path((organization_id, account_id)): Path<(Uuid, Uuid)>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<bella_ingestion::SyncOutcome>, ProviderAccountError> {
+    let user = authenticated_user(&state, &jar, &headers).await?;
+    require_membership(&state, user.id, organization_id, true).await?;
+
+    let row = sqlx::query(
+        "select provider, status
+         from provider_accounts
+         where id = $1 and organization_id = $2",
+    )
+    .bind(account_id)
+    .bind(organization_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ProviderAccountError::NotFound)?;
+    let provider: String = row.get("provider");
+    let status: String = row.get("status");
+    if provider != "openai" {
+        return Err(ProviderAccountError::BadRequest(
+            "sync is only implemented for openai provider accounts",
+        ));
+    }
+    if status != "verified" {
+        return Err(ProviderAccountError::BadRequest(
+            "provider account must be verified before syncing",
+        ));
+    }
+
+    let ingestor = bella_ingestion::openai::OpenAiIngestor::new(
+        state.db.clone(),
+        state.provider_client.clone(),
+        state.credential_cipher.clone(),
+        state.config.openai_base_url.clone(),
+    );
+    let outcome = ingestor
+        .sync_account(account_id)
+        .await
+        .map_err(|error| ProviderAccountError::Sync(error.to_string()))?;
+
+    Ok(Json(outcome))
 }
 
 async fn require_membership(
@@ -491,6 +542,8 @@ fn account_from_row(row: &sqlx::postgres::PgRow) -> Result<ProviderAccountRespon
         validated_at: row.try_get("validated_at")?,
         validation_error: row.try_get("validation_error")?,
         last_synced_at: row.try_get("last_synced_at")?,
+        next_sync_at: row.try_get("next_sync_at")?,
+        last_sync_error: row.try_get("last_sync_error")?,
         created_at: row.try_get("created_at")?,
     })
 }
@@ -503,6 +556,7 @@ pub enum ProviderAccountError {
     Forbidden,
     NotFound,
     Encryption,
+    Sync(String),
     Database(sqlx::Error),
 }
 
@@ -547,6 +601,14 @@ impl IntoResponse for ProviderAccountError {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({ "error": "credential storage failed" })),
+                )
+                    .into_response()
+            }
+            Self::Sync(error) => {
+                tracing::warn!(%error, "provider account sync failed");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({ "error": error })),
                 )
                     .into_response()
             }

@@ -251,6 +251,7 @@ dependencies = [
  "base64",
  "bella-core",
  "bella-db",
+ "bella-ingestion",
  "chrono",
  "dotenvy",
  "rand 0.8.6",
@@ -297,6 +298,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "bella-ingestion"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "base64",
+ "bella-db",
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "bella-mcp"
 version = "0.1.0"
 dependencies = [
@@ -308,7 +328,15 @@ name = "bella-worker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bella-db",
+ "bella-ingestion",
+ "dotenvy",
+ "reqwest",
+ "sqlx",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
