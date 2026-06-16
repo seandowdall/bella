@@ -6,6 +6,7 @@ members = [
     "crates/db",
     "crates/ingestion",
     "crates/mcp",
+    "crates/sandbox",
     "crates/worker",
 ]
 resolver = "2"

@@ -42,12 +42,21 @@ impl ValidationResult {
     }
 }
 
-pub async fn validate(client: &Client, provider: &str, secret: &str) -> ValidationResult {
+pub async fn validate(
+    client: &Client,
+    provider: &str,
+    secret: &str,
+    openai_base_url: &str,
+) -> ValidationResult {
     let request = match provider {
         "openai" => {
             let start_time = (Utc::now() - Duration::hours(1)).timestamp();
+            let url = format!(
+                "{}/v1/organization/costs",
+                openai_base_url.trim_end_matches('/')
+            );
             client
-                .get("https://api.openai.com/v1/organization/costs")
+                .get(url)
                 .bearer_auth(secret)
                 .query(&[("start_time", start_time), ("limit", 1_i64)])
         }

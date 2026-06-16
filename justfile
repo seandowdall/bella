@@ -20,6 +20,18 @@ pgweb:
 api:
     cargo run -p bella-api
 
+sandbox scenario="happy-path":
+    cargo run -p bella-sandbox -- --scenario {{scenario}}
+
+api-sandbox:
+    OPENAI_BASE_URL=http://127.0.0.1:4010/openai cargo run -p bella-api
+
+worker:
+    cargo run -p bella-worker
+
+worker-sandbox:
+    OPENAI_BASE_URL=http://127.0.0.1:4010/openai cargo run -p bella-worker
+
 web:
     bun run --cwd apps/web dev
 
