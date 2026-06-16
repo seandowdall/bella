@@ -108,17 +108,15 @@ impl OpenAiIngestor {
             .await?;
         let mut usage_buckets = 0;
         for (cursor, payload) in usage_pages {
-            let raw_payload_id = self
-                .store_raw_payload(
-                    provider_account_id,
-                    sync_run_id,
-                    USAGE_ENDPOINT,
-                    window_start,
-                    window_end,
-                    &cursor,
-                    &payload,
-                )
-                .await?;
+            let request = RawPayloadRequest {
+                provider_account_id,
+                sync_run_id,
+                endpoint: USAGE_ENDPOINT,
+                window_start,
+                window_end,
+                page_cursor: cursor,
+            };
+            let raw_payload_id = self.store_raw_payload(&request, &payload).await?;
             usage_buckets += self
                 .upsert_usage_buckets(provider_account_id, raw_payload_id, &payload)
                 .await?;
@@ -129,17 +127,15 @@ impl OpenAiIngestor {
             .await?;
         let mut cost_snapshots = 0;
         for (cursor, payload) in cost_pages {
-            let raw_payload_id = self
-                .store_raw_payload(
-                    provider_account_id,
-                    sync_run_id,
-                    COSTS_ENDPOINT,
-                    window_start,
-                    window_end,
-                    &cursor,
-                    &payload,
-                )
-                .await?;
+            let request = RawPayloadRequest {
+                provider_account_id,
+                sync_run_id,
+                endpoint: COSTS_ENDPOINT,
+                window_start,
+                window_end,
+                page_cursor: cursor,
+            };
+            let raw_payload_id = self.store_raw_payload(&request, &payload).await?;
             cost_snapshots += self
                 .upsert_cost_snapshots(provider_account_id, raw_payload_id, &payload)
                 .await?;
@@ -245,12 +241,7 @@ impl OpenAiIngestor {
 
     async fn store_raw_payload(
         &self,
-        provider_account_id: Uuid,
-        sync_run_id: Uuid,
-        endpoint: &str,
-        window_start: DateTime<Utc>,
-        window_end: DateTime<Utc>,
-        page_cursor: &str,
+        request: &RawPayloadRequest,
         payload: &Value,
     ) -> anyhow::Result<Uuid> {
         let payload_bytes = serde_json::to_vec(payload)?;
@@ -266,13 +257,13 @@ impl OpenAiIngestor {
              returning id",
         )
         .bind(id)
-        .bind(provider_account_id)
-        .bind(sync_run_id)
+        .bind(request.provider_account_id)
+        .bind(request.sync_run_id)
         .bind(PROVIDER)
-        .bind(endpoint)
-        .bind(window_start)
-        .bind(window_end)
-        .bind(page_cursor)
+        .bind(request.endpoint)
+        .bind(request.window_start)
+        .bind(request.window_end)
+        .bind(&request.page_cursor)
         .bind(payload_hash)
         .bind(payload)
         .fetch_one(&self.db)
@@ -505,6 +496,15 @@ struct ProviderAccount {
     provider: String,
     credential_ciphertext: Vec<u8>,
     credential_nonce: Vec<u8>,
+}
+
+struct RawPayloadRequest {
+    provider_account_id: Uuid,
+    sync_run_id: Uuid,
+    endpoint: &'static str,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    page_cursor: String,
 }
 
 fn should_retry(status: StatusCode) -> bool {
