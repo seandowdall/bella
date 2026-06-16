@@ -81,6 +81,24 @@ fn required_env(name: &str) -> anyhow::Result<String> {
     Ok(value)
 }
 
+fn bind_addr_from_env() -> anyhow::Result<SocketAddr> {
+    if let Ok(value) = env::var("BELLA_API_BIND_ADDR") {
+        return value
+            .parse()
+            .map_err(|error| anyhow::anyhow!("invalid BELLA_API_BIND_ADDR: {error}"));
+    }
+
+    if let Ok(port) = env::var("PORT") {
+        return format!("0.0.0.0:{port}")
+            .parse()
+            .map_err(|error| anyhow::anyhow!("invalid PORT: {error}"));
+    }
+
+    "127.0.0.1:3000"
+        .parse()
+        .map_err(|error| anyhow::anyhow!("invalid default API bind address: {error}"))
+}
+
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
@@ -98,9 +116,7 @@ async fn main() -> anyhow::Result<()> {
 
     let database_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://bella:bella@127.0.0.1:5432/bella".to_string());
-    let bind_addr: SocketAddr = env::var("BELLA_API_BIND_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:3000".to_string())
-        .parse()?;
+    let bind_addr = bind_addr_from_env()?;
     let config = Config::from_env()?;
     let credential_cipher = credentials::CredentialCipher::from_base64(&required_env(
         "BELLA_CREDENTIAL_ENCRYPTION_KEY",
