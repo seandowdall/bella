@@ -107,6 +107,13 @@ enum ProviderCommand {
         #[arg(long)]
         account: String,
     },
+    /// Run an immediate sync for a provider account.
+    Sync {
+        #[arg(long)]
+        organization: String,
+        #[arg(long)]
+        account: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -164,6 +171,17 @@ struct ProviderAccount {
     validation_error: Option<String>,
     last_synced_at: Option<String>,
     created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SyncOutcome {
+    sync_run_id: String,
+    provider_account_id: String,
+    provider: String,
+    window_start: String,
+    window_end: String,
+    usage_buckets: usize,
+    cost_snapshots: usize,
 }
 
 #[derive(Serialize)]
@@ -389,6 +407,28 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     println!("Disconnected provider account {account}.");
                 }
+            }
+            ProviderCommand::Sync {
+                organization,
+                account,
+            } => {
+                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let outcome = sync_provider(
+                    &cli.api_base_url,
+                    &credentials.token,
+                    &organization,
+                    &account,
+                )
+                .await?;
+                print_value(&outcome, cli.json, || {
+                    format!(
+                        "Synced {} account {}: {} usage buckets, {} cost snapshots.",
+                        outcome.provider,
+                        outcome.provider_account_id,
+                        outcome.usage_buckets,
+                        outcome.cost_snapshots
+                    )
+                })?;
             }
         },
     }
@@ -677,6 +717,28 @@ async fn disconnect_provider(
         .error_for_status()
         .context("Bella API rejected the provider disconnect request")?;
     Ok(())
+}
+
+async fn sync_provider(
+    api_base_url: &str,
+    token: &str,
+    organization_id: &str,
+    account_id: &str,
+) -> anyhow::Result<SyncOutcome> {
+    Client::new()
+        .post(format!(
+            "{}/v1/organizations/{organization_id}/provider-accounts/{account_id}/sync",
+            api_base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("failed to contact Bella API")?
+        .error_for_status()
+        .context("Bella API rejected the provider sync request")?
+        .json()
+        .await
+        .context("Bella API returned an invalid provider sync response")
 }
 
 fn read_provider_secret(secret: Option<String>, secret_stdin: bool) -> anyhow::Result<String> {

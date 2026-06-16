@@ -7,31 +7,38 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import type { UsageSummary } from '@/lib/dashboard-types'
 
-const metrics = [
-  {
-    label: 'Total spend',
-    value: '$0.00',
-    description: 'Current billing period',
-  },
-  {
-    label: 'Input tokens',
-    value: '0',
-    description: 'Across all providers',
-  },
-  {
-    label: 'Output tokens',
-    value: '0',
-    description: 'Across all providers',
-  },
-  {
-    label: 'Provider accounts',
-    value: '0',
-    description: 'No credentials stored yet',
-  },
-]
+export function SectionCards({
+  summary,
+  loading,
+}: {
+  summary?: UsageSummary
+  loading?: boolean
+}) {
+  const metrics = [
+    {
+      label: 'Total spend',
+      value: loading ? '...' : formatMicros(summary?.total_spend_micros ?? 0),
+      description: 'Selected date range',
+    },
+    {
+      label: 'Input tokens',
+      value: loading ? '...' : formatNumber(summary?.input_tokens ?? 0),
+      description: 'Across all providers',
+    },
+    {
+      label: 'Output tokens',
+      value: loading ? '...' : formatNumber(summary?.output_tokens ?? 0),
+      description: 'Across all providers',
+    },
+    {
+      label: 'Requests',
+      value: loading ? '...' : formatNumber(summary?.request_count ?? 0),
+      description: 'Model calls imported',
+    },
+  ]
 
-export function SectionCards() {
   return (
     <div className="grid grid-cols-1 gap-4 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
       {metrics.map((metric) => (
@@ -45,7 +52,7 @@ export function SectionCards() {
               {metric.value}
             </CardTitle>
             <CardAction>
-              <Badge variant="outline">No data</Badge>
+              <Badge variant="outline">{loading ? 'Loading' : 'Live data'}</Badge>
             </CardAction>
           </CardHeader>
           <CardFooter className="text-muted-foreground text-sm">
@@ -55,4 +62,15 @@ export function SectionCards() {
       ))}
     </div>
   )
+}
+
+function formatMicros(value: number) {
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: 'USD',
+  }).format(value / 1_000_000)
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat().format(value)
 }

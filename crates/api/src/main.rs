@@ -3,6 +3,7 @@ mod credentials;
 mod organizations;
 mod provider_accounts;
 mod provider_validation;
+mod reporting;
 
 use axum::{
     Json, Router,
@@ -141,6 +142,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/organizations/:organization_id/provider-accounts/:account_id/sync",
             post(provider_accounts::sync_now),
+        )
+        .route(
+            "/v1/organizations/:organization_id/usage/summary",
+            get(reporting::summary),
         )
         .with_state(AppState {
             db,

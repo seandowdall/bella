@@ -47,5 +47,42 @@ export type ProviderAccount = {
   validated_at: string | null
   validation_error: string | null
   last_synced_at: string | null
+  next_sync_at: string | null
+  last_sync_error: string | null
   created_at: string
+}
+
+export type DailySpend = {
+  date: string
+  amount_micros: number
+}
+
+export type ModelBreakdown = {
+  provider: string
+  model: string
+  amount_micros: number
+  input_tokens: number
+  output_tokens: number
+  request_count: number
+}
+
+export type UsageSummary = {
+  start: string
+  end: string
+  total_spend_micros: number
+  input_tokens: number
+  output_tokens: number
+  request_count: number
+  daily_spend: DailySpend[]
+  model_breakdown: ModelBreakdown[]
+}
+
+export type SyncOutcome = {
+  sync_run_id: string
+  provider_account_id: string
+  provider: string
+  window_start: string
+  window_end: string
+  usage_buckets: number
+  cost_snapshots: number
 }
