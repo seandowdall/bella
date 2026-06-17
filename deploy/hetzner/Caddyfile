@@ -1,0 +1,15 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$BELLA_DOMAIN} {
+	encode zstd gzip
+
+	handle_path /api/* {
+		reverse_proxy bella-api:3000
+	}
+
+	handle {
+		reverse_proxy bella-web:5173
+	}
+}

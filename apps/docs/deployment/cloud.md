@@ -1,8 +1,8 @@
 # Bella Cloud Deployment
 
-Bella Cloud should use the same application contract as self-hosted
-installations, but run on managed infrastructure where that reduces operational
-risk.
+Bella Cloud v1 runs on a self-managed Hetzner VPS. The hosted deployment should
+stay close to the self-hosted shape while making our production operations
+explicit and repeatable.
 
 ## Public URL Contract
 
@@ -25,15 +25,16 @@ requests:
 This keeps browser cookies same-origin and gives self-hosted and hosted
 deployments the same external shape.
 
-## Recommended Hosted Shape
+## Hosted Shape
 
-Start with managed services for state and secrets:
+Bella Cloud v1 uses Docker Compose on a Hetzner VPS:
 
 ```text
-Managed edge or routing layer
+Hetzner VPS
+  -> Caddy reverse proxy / TLS
   -> bella-web container
   -> bella-api container
-      -> managed Postgres
+  -> Postgres container with persistent volume
 ```
 
 Use the checked-in Dockerfiles as the portable artifact:
@@ -43,9 +44,8 @@ docker build -f Dockerfile.api -t bella-api .
 docker build -f Dockerfile.web -t bella-web .
 ```
 
-The same images should run on a VM, Render, Fly, ECS, or another container
-runtime. The hosted deployment should prefer managed Postgres over a database on
-the same VM as the application.
+The same images can later run on Render, Fly, ECS, or another container runtime.
+For now, the production runbook is [Hetzner VPS Deployment](hetzner.md).
 
 ## Required Environment
 
@@ -84,12 +84,15 @@ as `NEXT_PUBLIC_` variables.
 
 ## Secrets
 
-Store these in the hosting platform's secret manager:
+Store these only in the deployment environment file on the server:
 
 - `DATABASE_URL`
 - `BELLA_CREDENTIAL_ENCRYPTION_KEY`
 - `GITHUB_OAUTH_CLIENT_SECRET`
 - Provider credentials submitted through Bella
+
+The server copy of `deploy/hetzner/.env` must not be committed and should be
+readable only by the deployment user.
 
 Generate `BELLA_CREDENTIAL_ENCRYPTION_KEY` once and keep it stable:
 
@@ -115,32 +118,35 @@ The callback must match `BELLA_PUBLIC_API_URL` plus
 
 ## Database
 
-Use managed Postgres for Bella Cloud. The first production choice should be one
-of:
+Bella Cloud v1 uses the Postgres service in `deploy/hetzner/docker-compose.yml`
+with a persistent Docker volume. Because this is self-managed, production is not
+ready until backup and restore are configured.
 
-- Render Postgres when the app also runs on Render.
-- Neon Postgres when database branching, restore workflows, or provider
-  independence matter more.
-- AWS RDS or another cloud-native Postgres when deploying into an existing cloud
-  account.
+Minimum requirements:
 
-The application user should have only the privileges needed by the app and
-migrations. Keep backups, restore windows, and database region documented in the
-deployment record.
+- Postgres is not exposed publicly.
+- The data volume survives container restarts and image rebuilds.
+- Daily backups run successfully.
+- Backups are copied off the VPS.
+- Restore is tested against staging before production launch.
 
 ## Deployment Checklist
 
 - HTTPS is enabled for the public domain.
+- DNS points `app.bellalabs.ai` to the Hetzner VPS.
 - `BELLA_SECURE_COOKIES=true`.
 - `BELLA_PUBLIC_API_URL` is externally reachable and uses `/api`.
 - `BELLA_WEB_URL` is the exact dashboard origin with no trailing path.
 - The GitHub OAuth callback exactly matches the public API callback URL.
-- Secrets are stored in the platform secret manager.
+- Secrets are stored only in the server `.env` file with restricted
+  permissions.
 - No GitHub, database, or provider secrets are exposed as `NEXT_PUBLIC_`
   variables.
 - API health check is configured as `/health` internally or `/api/health`
   externally.
-- Postgres backups and restore expectations are recorded.
+- Postgres backups, off-server copy, and restore expectations are recorded.
+- Firewall allows only SSH, HTTP, and HTTPS.
+- Caddy is the only public entrypoint for web and API traffic.
 - Deploys are non-interactive and reproducible from the Dockerfiles.
 
 ## Smoke Test

@@ -1,4 +1,5 @@
 /target
+backups
 /.build
 **/.build
 node_modules
