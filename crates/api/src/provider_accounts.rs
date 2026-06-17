@@ -345,10 +345,11 @@ pub async fn upsert(
 
     let row = sqlx::query(
         "insert into provider_accounts
-         (id, organization_id, workspace_id, provider, display_name,
-          credential_ciphertext, credential_nonce, credential_fingerprint, status,
-          validated_at, validation_error, created_by)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          (id, organization_id, workspace_id, provider, display_name,
+           credential_ciphertext, credential_nonce, credential_fingerprint, status,
+           validated_at, validation_error, next_sync_at, created_by)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                  case when $9 = 'verified' then now() else null end, $12)
          on conflict (workspace_id, provider, display_name) do update
          set credential_ciphertext = excluded.credential_ciphertext,
              credential_nonce = excluded.credential_nonce,
@@ -356,6 +357,8 @@ pub async fn upsert(
              status = excluded.status,
              validated_at = excluded.validated_at,
              validation_error = excluded.validation_error,
+             next_sync_at = case when excluded.status = 'verified' then now() else null end,
+             last_sync_error = null,
              updated_at = now()
          returning id, organization_id, workspace_id,
                    (select name from workspaces where id = workspace_id) as workspace_name,

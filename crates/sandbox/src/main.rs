@@ -38,6 +38,11 @@ enum Scenario {
     HappyPath,
     Pagination,
     RateLimitOnce,
+    ServerErrorOnce,
+    DuplicateBuckets,
+    MalformedUsage,
+    MalformedCosts,
+    MissingOptionalDimensions,
 }
 
 #[derive(Clone)]
@@ -96,7 +101,7 @@ async fn openai_usage(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    if let Some(response) = maybe_rate_limit(&state, "openai_usage") {
+    if let Some(response) = maybe_transient_failure(&state, "openai_usage") {
         return response;
     }
 
@@ -104,7 +109,13 @@ async fn openai_usage(
     let bounds = bucket_bounds(&query);
     let payload = match state.scenario {
         Scenario::Pagination => openai_usage_paginated(page, bounds),
-        Scenario::HappyPath | Scenario::RateLimitOnce => openai_usage_page(false, bounds),
+        Scenario::DuplicateBuckets => openai_usage_duplicate_buckets(bounds),
+        Scenario::MalformedUsage => json!({ "data": [{ "results": [] }] }),
+        Scenario::MissingOptionalDimensions => openai_usage_missing_optional_dimensions(bounds),
+        Scenario::HappyPath
+        | Scenario::RateLimitOnce
+        | Scenario::ServerErrorOnce
+        | Scenario::MalformedCosts => openai_usage_page(false, bounds),
     };
     Json(payload).into_response()
 }
@@ -113,7 +124,7 @@ async fn openai_costs(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    if let Some(response) = maybe_rate_limit(&state, "openai_costs") {
+    if let Some(response) = maybe_transient_failure(&state, "openai_costs") {
         return response;
     }
 
@@ -121,20 +132,32 @@ async fn openai_costs(
     let bounds = bucket_bounds(&query);
     let payload = match state.scenario {
         Scenario::Pagination => openai_costs_paginated(page, bounds),
-        Scenario::HappyPath | Scenario::RateLimitOnce => openai_costs_page(false, bounds),
+        Scenario::DuplicateBuckets => openai_costs_duplicate_buckets(bounds),
+        Scenario::MalformedCosts => json!({
+            "data": [{
+                "start_time": bounds.0,
+                "end_time": bounds.1,
+                "results": [{ "amount": { "value": { "bad": "shape" } } }]
+            }]
+        }),
+        Scenario::MissingOptionalDimensions => openai_costs_missing_optional_dimensions(bounds),
+        Scenario::HappyPath
+        | Scenario::RateLimitOnce
+        | Scenario::ServerErrorOnce
+        | Scenario::MalformedUsage => openai_costs_page(false, bounds),
     };
     Json(payload).into_response()
 }
 
-fn maybe_rate_limit(state: &AppState, endpoint: &'static str) -> Option<Response> {
-    if !matches!(state.scenario, Scenario::RateLimitOnce) {
-        return None;
-    }
+fn maybe_transient_failure(state: &AppState, endpoint: &'static str) -> Option<Response> {
     let mut rate_limited = state
         .rate_limited
         .lock()
         .expect("rate-limit state poisoned");
-    if rate_limited.insert(endpoint) {
+    if !rate_limited.insert(endpoint) {
+        return None;
+    }
+    if matches!(state.scenario, Scenario::RateLimitOnce) {
         let mut response = Json(json!({
             "error": {
                 "message": "sandbox rate limit; retry this request",
@@ -146,6 +169,16 @@ fn maybe_rate_limit(state: &AppState, endpoint: &'static str) -> Option<Response
         response
             .headers_mut()
             .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+        Some(response)
+    } else if matches!(state.scenario, Scenario::ServerErrorOnce) {
+        let mut response = Json(json!({
+            "error": {
+                "message": "sandbox provider outage; retry this request",
+                "type": "server_error"
+            }
+        }))
+        .into_response();
+        *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
         Some(response)
     } else {
         None
@@ -203,6 +236,36 @@ fn openai_usage_page(has_more: bool, (start_time, end_time): (i64, i64)) -> Valu
     })
 }
 
+fn openai_usage_duplicate_buckets(bounds: (i64, i64)) -> Value {
+    let mut payload = openai_usage_page(false, bounds);
+    let first = payload["data"][0].clone();
+    payload["data"].as_array_mut().unwrap().push(first);
+    payload
+}
+
+fn openai_usage_missing_optional_dimensions((start_time, end_time): (i64, i64)) -> Value {
+    json!({
+        "object": "page",
+        "data": [
+            {
+                "object": "bucket",
+                "start_time": start_time,
+                "end_time": end_time,
+                "results": [
+                    {
+                        "object": "organization.usage.completions.result",
+                        "input_tokens": 120000,
+                        "output_tokens": 42000,
+                        "num_model_requests": 84
+                    }
+                ]
+            }
+        ],
+        "has_more": false,
+        "next_page": Value::Null
+    })
+}
+
 fn openai_costs_page(has_more: bool, (start_time, end_time): (i64, i64)) -> Value {
     json!({
         "object": "page",
@@ -227,5 +290,36 @@ fn openai_costs_page(has_more: bool, (start_time, end_time): (i64, i64)) -> Valu
         ],
         "has_more": has_more,
         "next_page": if has_more { json!("costs-page-2") } else { Value::Null }
+    })
+}
+
+fn openai_costs_duplicate_buckets(bounds: (i64, i64)) -> Value {
+    let mut payload = openai_costs_page(false, bounds);
+    let first = payload["data"][0].clone();
+    payload["data"].as_array_mut().unwrap().push(first);
+    payload
+}
+
+fn openai_costs_missing_optional_dimensions((start_time, end_time): (i64, i64)) -> Value {
+    json!({
+        "object": "page",
+        "data": [
+            {
+                "object": "bucket",
+                "start_time": start_time,
+                "end_time": end_time,
+                "results": [
+                    {
+                        "object": "organization.costs.result",
+                        "amount": {
+                            "value": "0.184200",
+                            "currency": "usd"
+                        }
+                    }
+                ]
+            }
+        ],
+        "has_more": false,
+        "next_page": Value::Null
     })
 }
