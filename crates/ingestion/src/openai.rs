@@ -278,51 +278,38 @@ impl OpenAiIngestor {
         payload: &Value,
     ) -> anyhow::Result<usize> {
         let mut count = 0;
-        for bucket in payload
-            .get("data")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            let (bucket_start, bucket_end) = bucket_bounds(bucket)?;
-            for result in bucket
-                .get("results")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                sqlx::query(
-                    "insert into usage_buckets
-                     (id, provider_account_id, provider, bucket_start, bucket_end, model,
-                      project_external_id, user_external_id, api_key_external_id, operation,
-                      input_tokens, output_tokens, request_count, raw_payload_id)
-                     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-                     on conflict (provider_account_id, bucket_start, bucket_end, model,
-                                  project_external_id, user_external_id, api_key_external_id, operation)
-                     do update set input_tokens = excluded.input_tokens,
-                                   output_tokens = excluded.output_tokens,
-                                   request_count = excluded.request_count,
-                                   raw_payload_id = excluded.raw_payload_id,
-                                   updated_at = now()",
-                )
-                .bind(Uuid::new_v4())
-                .bind(provider_account_id)
-                .bind(PROVIDER)
-                .bind(bucket_start)
-                .bind(bucket_end)
-                .bind(text_dim(result, "model"))
-                .bind(text_dim(result, "project_id"))
-                .bind(text_dim(result, "user_id"))
-                .bind(text_dim(result, "api_key_id"))
-                .bind(text_dim(result, "operation"))
-                .bind(int_dim(result, &["input_tokens"]))
-                .bind(int_dim(result, &["output_tokens"]))
-                .bind(int_dim(result, &["num_model_requests", "requests"]))
-                .bind(raw_payload_id)
-                .execute(&self.db)
-                .await?;
-                count += 1;
-            }
+        for row in usage_rows_from_payload(payload)? {
+            sqlx::query(
+                "insert into usage_buckets
+                 (id, provider_account_id, provider, bucket_start, bucket_end, model,
+                  project_external_id, user_external_id, api_key_external_id, operation,
+                  input_tokens, output_tokens, request_count, raw_payload_id)
+                 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                 on conflict (provider_account_id, bucket_start, bucket_end, model,
+                              project_external_id, user_external_id, api_key_external_id, operation)
+                 do update set input_tokens = excluded.input_tokens,
+                               output_tokens = excluded.output_tokens,
+                               request_count = excluded.request_count,
+                               raw_payload_id = excluded.raw_payload_id,
+                               updated_at = now()",
+            )
+            .bind(Uuid::new_v4())
+            .bind(provider_account_id)
+            .bind(PROVIDER)
+            .bind(row.bucket_start)
+            .bind(row.bucket_end)
+            .bind(row.model)
+            .bind(row.project_external_id)
+            .bind(row.user_external_id)
+            .bind(row.api_key_external_id)
+            .bind(row.operation)
+            .bind(row.input_tokens)
+            .bind(row.output_tokens)
+            .bind(row.request_count)
+            .bind(raw_payload_id)
+            .execute(&self.db)
+            .await?;
+            count += 1;
         }
         Ok(count)
     }
@@ -334,52 +321,32 @@ impl OpenAiIngestor {
         payload: &Value,
     ) -> anyhow::Result<usize> {
         let mut count = 0;
-        for bucket in payload
-            .get("data")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            let (bucket_start, bucket_end) = bucket_bounds(bucket)?;
-            for result in bucket
-                .get("results")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                let amount = result.get("amount").unwrap_or(&Value::Null);
-                let amount_micros = amount_to_micros(amount)?;
-                let currency = amount
-                    .get("currency")
-                    .and_then(Value::as_str)
-                    .unwrap_or("usd")
-                    .to_lowercase();
-                sqlx::query(
-                    "insert into cost_snapshots
-                     (id, provider_account_id, provider, bucket_start, bucket_end, line_item,
-                      model, project_external_id, amount_micros, currency, raw_payload_id)
-                     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                     on conflict (provider_account_id, bucket_start, bucket_end, line_item,
-                                  model, project_external_id, currency)
-                     do update set amount_micros = excluded.amount_micros,
-                                   raw_payload_id = excluded.raw_payload_id,
-                                   updated_at = now()",
-                )
-                .bind(Uuid::new_v4())
-                .bind(provider_account_id)
-                .bind(PROVIDER)
-                .bind(bucket_start)
-                .bind(bucket_end)
-                .bind(text_dim(result, "line_item"))
-                .bind(text_dim(result, "model"))
-                .bind(text_dim(result, "project_id"))
-                .bind(amount_micros)
-                .bind(currency)
-                .bind(raw_payload_id)
-                .execute(&self.db)
-                .await?;
-                count += 1;
-            }
+        for row in cost_rows_from_payload(payload)? {
+            sqlx::query(
+                "insert into cost_snapshots
+                 (id, provider_account_id, provider, bucket_start, bucket_end, line_item,
+                  model, project_external_id, amount_micros, currency, raw_payload_id)
+                 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                 on conflict (provider_account_id, bucket_start, bucket_end, line_item,
+                              model, project_external_id, currency)
+                 do update set amount_micros = excluded.amount_micros,
+                               raw_payload_id = excluded.raw_payload_id,
+                               updated_at = now()",
+            )
+            .bind(Uuid::new_v4())
+            .bind(provider_account_id)
+            .bind(PROVIDER)
+            .bind(row.bucket_start)
+            .bind(row.bucket_end)
+            .bind(row.line_item)
+            .bind(row.model)
+            .bind(row.project_external_id)
+            .bind(row.amount_micros)
+            .bind(row.currency)
+            .bind(raw_payload_id)
+            .execute(&self.db)
+            .await?;
+            count += 1;
         }
         Ok(count)
     }
@@ -454,7 +421,7 @@ impl OpenAiIngestor {
         .await?;
         sqlx::query(
             "update provider_accounts
-             set last_synced_at = now(), next_sync_at = now() + interval '6 hours',
+             set last_synced_at = now(), next_sync_at = now() + interval '15 minutes',
                  last_sync_error = null, updated_at = now()
              where id = $1",
         )
@@ -507,6 +474,31 @@ struct RawPayloadRequest {
     page_cursor: String,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct UsageBucketRow {
+    bucket_start: DateTime<Utc>,
+    bucket_end: DateTime<Utc>,
+    model: String,
+    project_external_id: String,
+    user_external_id: String,
+    api_key_external_id: String,
+    operation: String,
+    input_tokens: i64,
+    output_tokens: i64,
+    request_count: i64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CostSnapshotRow {
+    bucket_start: DateTime<Utc>,
+    bucket_end: DateTime<Utc>,
+    line_item: String,
+    model: String,
+    project_external_id: String,
+    amount_micros: i64,
+    currency: String,
+}
+
 fn should_retry(status: StatusCode) -> bool {
     status == StatusCode::REQUEST_TIMEOUT
         || status == StatusCode::TOO_MANY_REQUESTS
@@ -529,6 +521,72 @@ fn timestamp(seconds: i64) -> anyhow::Result<DateTime<Utc>> {
     Utc.timestamp_opt(seconds, 0)
         .single()
         .ok_or_else(|| anyhow::anyhow!("invalid provider timestamp {seconds}"))
+}
+
+fn usage_rows_from_payload(payload: &Value) -> anyhow::Result<Vec<UsageBucketRow>> {
+    let mut rows = Vec::new();
+    for bucket in payload
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let (bucket_start, bucket_end) = bucket_bounds(bucket)?;
+        for result in bucket
+            .get("results")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            rows.push(UsageBucketRow {
+                bucket_start,
+                bucket_end,
+                model: text_dim(result, "model"),
+                project_external_id: text_dim(result, "project_id"),
+                user_external_id: text_dim(result, "user_id"),
+                api_key_external_id: text_dim(result, "api_key_id"),
+                operation: text_dim(result, "operation"),
+                input_tokens: int_dim(result, &["input_tokens"]),
+                output_tokens: int_dim(result, &["output_tokens"]),
+                request_count: int_dim(result, &["num_model_requests", "requests"]),
+            });
+        }
+    }
+    Ok(rows)
+}
+
+fn cost_rows_from_payload(payload: &Value) -> anyhow::Result<Vec<CostSnapshotRow>> {
+    let mut rows = Vec::new();
+    for bucket in payload
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let (bucket_start, bucket_end) = bucket_bounds(bucket)?;
+        for result in bucket
+            .get("results")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let amount = result.get("amount").unwrap_or(&Value::Null);
+            rows.push(CostSnapshotRow {
+                bucket_start,
+                bucket_end,
+                line_item: text_dim(result, "line_item"),
+                model: text_dim(result, "model"),
+                project_external_id: text_dim(result, "project_id"),
+                amount_micros: amount_to_micros(amount)?,
+                currency: amount
+                    .get("currency")
+                    .and_then(Value::as_str)
+                    .unwrap_or("usd")
+                    .to_lowercase(),
+            });
+        }
+    }
+    Ok(rows)
 }
 
 fn text_dim(value: &Value, key: &str) -> String {
@@ -578,7 +636,28 @@ fn decimal_to_micros(value: &str) -> anyhow::Result<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::decimal_to_micros;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use super::{
+        OpenAiIngestor, USAGE_ENDPOINT, cost_rows_from_payload, decimal_to_micros,
+        usage_rows_from_payload,
+    };
+    use crate::credentials::CredentialCipher;
+    use axum::{
+        Json, Router,
+        extract::{Query, State},
+        http::{HeaderValue, StatusCode, header},
+        response::{IntoResponse, Response},
+        routing::get,
+    };
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use chrono::{Duration, Utc};
+    use serde_json::{Value, json};
+    use sqlx::postgres::PgPoolOptions;
+    use tokio::net::TcpListener;
 
     #[test]
     fn converts_decimal_money_to_micros() {
@@ -587,5 +666,265 @@ mod tests {
         assert_eq!(decimal_to_micros("1.23").unwrap(), 1_230_000);
         assert_eq!(decimal_to_micros("0.0000019").unwrap(), 1);
         assert_eq!(decimal_to_micros("-0.50").unwrap(), -500_000);
+    }
+
+    #[tokio::test]
+    async fn fetches_paginated_openai_pages() {
+        let base_url = spawn_server(Router::new().route(
+            USAGE_ENDPOINT,
+            get(
+                |Query(query): Query<std::collections::HashMap<String, String>>| async move {
+                    let is_second = query.get("page").is_some_and(|page| page == "page-2");
+                    Json(openai_usage_payload(!is_second))
+                },
+            ),
+        ))
+        .await;
+        let ingestor = test_ingestor(base_url);
+
+        let pages = ingestor
+            .fetch_pages(
+                "sandbox-key",
+                USAGE_ENDPOINT,
+                Utc::now() - Duration::days(1),
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].0, "");
+        assert_eq!(pages[1].0, "page-2");
+    }
+
+    #[tokio::test]
+    async fn retries_rate_limited_openai_pages() {
+        #[derive(Clone)]
+        struct TestState {
+            attempts: Arc<AtomicUsize>,
+        }
+
+        async fn handler(State(state): State<TestState>) -> Response {
+            if state.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                let mut response = Json(json!({ "error": "rate limited" })).into_response();
+                *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from_static("0"));
+                response
+            } else {
+                Json(openai_usage_payload(false)).into_response()
+            }
+        }
+
+        let state = TestState {
+            attempts: Arc::new(AtomicUsize::new(0)),
+        };
+        let attempts = state.attempts.clone();
+        let base_url = spawn_server(
+            Router::new()
+                .route(USAGE_ENDPOINT, get(handler))
+                .with_state(state),
+        )
+        .await;
+        let ingestor = test_ingestor(base_url);
+
+        let pages = ingestor
+            .fetch_pages(
+                "sandbox-key",
+                USAGE_ENDPOINT,
+                Utc::now() - Duration::days(1),
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(pages.len(), 1);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn retries_transient_server_errors() {
+        #[derive(Clone)]
+        struct TestState {
+            attempts: Arc<AtomicUsize>,
+        }
+
+        async fn handler(State(state): State<TestState>) -> Response {
+            if state.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                let mut response = Json(json!({ "error": "provider unavailable" })).into_response();
+                *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                response
+            } else {
+                Json(openai_usage_payload(false)).into_response()
+            }
+        }
+
+        let state = TestState {
+            attempts: Arc::new(AtomicUsize::new(0)),
+        };
+        let attempts = state.attempts.clone();
+        let base_url = spawn_server(
+            Router::new()
+                .route(USAGE_ENDPOINT, get(handler))
+                .with_state(state),
+        )
+        .await;
+        let ingestor = test_ingestor(base_url);
+
+        ingestor
+            .fetch_pages(
+                "sandbox-key",
+                USAGE_ENDPOINT,
+                Utc::now() - Duration::days(1),
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn normalizes_missing_optional_usage_dimensions() {
+        let rows = usage_rows_from_payload(&json!({
+            "data": [{
+                "start_time": 1_766_361_600,
+                "end_time": 1_766_448_000,
+                "results": [{
+                    "input_tokens": 120,
+                    "output_tokens": 42,
+                    "num_model_requests": 7
+                }]
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].model, "");
+        assert_eq!(rows[0].project_external_id, "");
+        assert_eq!(rows[0].user_external_id, "");
+        assert_eq!(rows[0].api_key_external_id, "");
+        assert_eq!(rows[0].input_tokens, 120);
+        assert_eq!(rows[0].output_tokens, 42);
+        assert_eq!(rows[0].request_count, 7);
+    }
+
+    #[test]
+    fn keeps_duplicate_usage_rows_for_database_idempotency() {
+        let payload = json!({
+            "data": [
+                {
+                    "start_time": 1_766_361_600,
+                    "end_time": 1_766_448_000,
+                    "results": [{
+                        "input_tokens": 120,
+                        "output_tokens": 42,
+                        "num_model_requests": 7,
+                        "model": "gpt-4o-mini"
+                    }]
+                },
+                {
+                    "start_time": 1_766_361_600,
+                    "end_time": 1_766_448_000,
+                    "results": [{
+                        "input_tokens": 120,
+                        "output_tokens": 42,
+                        "num_model_requests": 7,
+                        "model": "gpt-4o-mini"
+                    }]
+                }
+            ]
+        });
+
+        let rows = usage_rows_from_payload(&payload).unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], rows[1]);
+    }
+
+    #[test]
+    fn rejects_malformed_usage_bucket() {
+        let error = usage_rows_from_payload(&json!({
+            "data": [{ "results": [] }]
+        }))
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("missing start_time"));
+    }
+
+    #[test]
+    fn normalizes_missing_optional_cost_dimensions() {
+        let rows = cost_rows_from_payload(&json!({
+            "data": [{
+                "start_time": 1_766_361_600,
+                "end_time": 1_766_448_000,
+                "results": [{
+                    "amount": { "value": "0.1842", "currency": "USD" }
+                }]
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].line_item, "");
+        assert_eq!(rows[0].model, "");
+        assert_eq!(rows[0].project_external_id, "");
+        assert_eq!(rows[0].amount_micros, 184_200);
+        assert_eq!(rows[0].currency, "usd");
+    }
+
+    #[test]
+    fn rejects_malformed_cost_amount() {
+        let error = cost_rows_from_payload(&json!({
+            "data": [{
+                "start_time": 1_766_361_600,
+                "end_time": 1_766_448_000,
+                "results": [{ "amount": { "value": { "bad": "shape" } } }]
+            }]
+        }))
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("amount.value"));
+    }
+
+    fn test_ingestor(base_url: String) -> OpenAiIngestor {
+        let db = PgPoolOptions::new()
+            .connect_lazy("postgres://bella:bella@127.0.0.1:5432/bella")
+            .unwrap();
+        let cipher = CredentialCipher::from_base64(&STANDARD.encode([7_u8; 32])).unwrap();
+        OpenAiIngestor::new(db, reqwest::Client::new(), cipher, base_url)
+    }
+
+    async fn spawn_server(router: Router) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        format!("http://{address}")
+    }
+
+    fn openai_usage_payload(has_more: bool) -> Value {
+        json!({
+            "data": [
+                {
+                    "start_time": 1_766_361_600,
+                    "end_time": 1_766_448_000,
+                    "results": [
+                        {
+                            "input_tokens": 100,
+                            "output_tokens": 50,
+                            "num_model_requests": 2,
+                            "model": "gpt-4o-mini"
+                        }
+                    ]
+                }
+            ],
+            "has_more": has_more,
+            "next_page": if has_more { json!("page-2") } else { Value::Null }
+        })
     }
 }

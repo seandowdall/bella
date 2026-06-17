@@ -36,6 +36,11 @@ Select a scenario with `--scenario` or `BELLA_SANDBOX_SCENARIO`:
 cargo run -p bella-sandbox -- --scenario happy-path
 cargo run -p bella-sandbox -- --scenario pagination
 cargo run -p bella-sandbox -- --scenario rate-limit-once
+cargo run -p bella-sandbox -- --scenario server-error-once
+cargo run -p bella-sandbox -- --scenario duplicate-buckets
+cargo run -p bella-sandbox -- --scenario malformed-usage
+cargo run -p bella-sandbox -- --scenario malformed-costs
+cargo run -p bella-sandbox -- --scenario missing-optional-dimensions
 ```
 
 Current scenarios:
@@ -44,6 +49,13 @@ Current scenarios:
 - `pagination`: usage and cost endpoints return a second page.
 - `rate-limit-once`: each OpenAI endpoint returns one `429 Retry-After` before
   succeeding.
+- `server-error-once`: each OpenAI endpoint returns one `500` before succeeding.
+- `duplicate-buckets`: usage and cost responses include duplicate buckets to test
+  idempotent imports.
+- `malformed-usage`: usage response is missing required bucket timestamps.
+- `malformed-costs`: costs response has an invalid `amount.value` shape.
+- `missing-optional-dimensions`: usage/cost rows omit optional model, project,
+  user, and API key dimensions.
 
 ## OpenAI Routes
 
