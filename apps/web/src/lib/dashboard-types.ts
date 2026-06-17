@@ -86,3 +86,20 @@ export type SyncOutcome = {
   usage_buckets: number
   cost_snapshots: number
 }
+
+export type AgentMessage = {
+  role: 'user' | 'assistant'
+  content: string
+  freshness?: string | null
+  metric_type?: 'provider_reported' | 'estimated_live' | 'reconciled' | 'finalized'
+  sources?: string[]
+  suggestions?: string[]
+}
+
+export type AgentMessageResponse = {
+  answer: string
+  metric_type: 'provider_reported' | 'estimated_live' | 'reconciled' | 'finalized'
+  freshness: string | null
+  sources: string[]
+  suggestions: string[]
+}

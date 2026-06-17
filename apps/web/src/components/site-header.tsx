@@ -10,10 +10,9 @@ import type { Organization } from '@/lib/dashboard-types'
 
 export function SiteHeader({
   organization,
-  onCreateOrganization,
 }: {
   organization?: Organization
-  onCreateOrganization: () => void
+  onCreateOrganization?: () => void
 }) {
   const pathname = usePathname()
   const { setOpen: setProviderOpen } = useProviderDialog()
@@ -28,7 +27,7 @@ export function SiteHeader({
         <Separator orientation="vertical" className="mx-1 h-4" />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-medium">
-            {organization?.name ?? 'Overview'}
+            {pathname === '/' ? 'Bella Home' : organization?.name ?? 'Overview'}
           </h1>
           {organization && (
             <p className="text-muted-foreground hidden truncate text-xs sm:block">
@@ -36,23 +35,17 @@ export function SiteHeader({
             </p>
           )}
         </div>
-        <Button
-          size="sm"
-          disabled={isProvidersPage && !canManageProviders}
-          onClick={
-            isProvidersPage
-              ? () => setProviderOpen(true)
-              : onCreateOrganization
-          }
-        >
-          <PlusIcon data-icon="inline-start" />
-          <span className="hidden sm:inline">
-            {isProvidersPage ? 'Add provider' : 'New organization'}
-          </span>
-          <span className="sm:hidden">
-            {isProvidersPage ? 'Add' : 'New'}
-          </span>
-        </Button>
+        {isProvidersPage && (
+          <Button
+            size="sm"
+            disabled={!canManageProviders}
+            onClick={() => setProviderOpen(true)}
+          >
+            <PlusIcon data-icon="inline-start" />
+            <span className="hidden sm:inline">Add provider</span>
+            <span className="sm:hidden">Add</span>
+          </Button>
+        )}
       </div>
     </header>
   )

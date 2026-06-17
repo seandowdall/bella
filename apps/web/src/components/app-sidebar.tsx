@@ -1,6 +1,7 @@
 import type * as React from 'react'
 import {
   BoxesIcon,
+  BotIcon,
   LayoutDashboardIcon,
 } from 'lucide-react'
 import { NavMain } from '@/components/nav-main'
@@ -15,7 +16,8 @@ import {
 import type { Organization, User } from '@/lib/dashboard-types'
 
 const navigation = [
-  { title: 'Overview', icon: LayoutDashboardIcon, href: '/' },
+  { title: 'Home', icon: BotIcon, href: '/' },
+  { title: 'Data', icon: LayoutDashboardIcon, href: '/data' },
   { title: 'Providers', icon: BoxesIcon, href: '/providers' },
 ]
 
