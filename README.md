@@ -91,6 +91,12 @@ just api
 just web
 ```
 
+Run the background worker to import provider usage and cost data on a schedule:
+
+```sh
+just worker
+```
+
 The dashboard uses an HTTP-only session cookie. The CLI uses the same GitHub
 OAuth app through a browser handoff and stores its API token in
 `~/.config/bella/credentials.json` with owner-only permissions:
@@ -105,6 +111,7 @@ Full setup guides:
 
 - [Contributor OAuth setup](apps/docs/contributors/github-oauth.md)
 - [Self-hosted OAuth setup](apps/docs/self-hosting/github-oauth.md)
+- [OpenAI ingestion](apps/docs/ingestion/openai.md)
 
 ## Organizations
 
