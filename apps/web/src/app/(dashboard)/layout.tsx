@@ -84,10 +84,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
         <SidebarInset>
           <SiteHeader
             organization={selectedOrganization}
-            onCreateOrganization={() => {
-              setCreateError("")
-              setCreateOpen(true)
-            }}
           />
           <div className="@container/main flex flex-1 flex-col gap-4 p-4 lg:p-6">
             {children}

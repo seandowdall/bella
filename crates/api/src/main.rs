@@ -1,3 +1,4 @@
+mod agent;
 mod auth;
 mod credentials;
 mod organizations;
@@ -146,6 +147,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/organizations/:organization_id/usage/summary",
             get(reporting::summary),
+        )
+        .route(
+            "/v1/organizations/:organization_id/agent/messages",
+            post(agent::message),
         )
         .with_state(AppState {
             db,

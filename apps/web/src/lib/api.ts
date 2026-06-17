@@ -1,5 +1,6 @@
 import type {
   Organization,
+  AgentMessageResponse,
   ProviderAccount,
   ProviderDefinition,
   SyncOutcome,
@@ -188,6 +189,33 @@ export async function getUsageSummary({
     throw new Error(await errorMessage(response, "Could not load usage summary."))
   }
   return response.json() as Promise<UsageSummary>
+}
+
+export async function sendAgentMessage({
+  organizationId,
+  message,
+}: {
+  organizationId: string
+  message: string
+}): Promise<AgentMessageResponse> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/agent/messages`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    },
+  )
+  if (!response.ok) {
+    throw new Error(
+      await errorMessage(
+        response,
+        "Bella could not reach the agent API. Restart the API on this branch and try again.",
+      ),
+    )
+  }
+  return response.json() as Promise<AgentMessageResponse>
 }
 
 export function getLoginUrl(): string {
