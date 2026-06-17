@@ -6,11 +6,13 @@ explicit and repeatable.
 
 ## Public URL Contract
 
-Serve the dashboard and API through one HTTPS origin:
+Serve the dashboard and API through one HTTPS origin. For Bella Cloud
+production, the intended domain is `app.bellalabs.ai`; it is not live until DNS,
+TLS, and smoke tests have passed on the Hetzner VPS.
 
 ```text
-Dashboard: https://app.bellalabs.ai/
-API:       https://app.bellalabs.ai/api/
+Dashboard: https://<bella-domain>/
+API:       https://<bella-domain>/api/
 ```
 
 The reverse proxy or platform router must strip `/api` before forwarding API
@@ -53,8 +55,8 @@ API service:
 
 ```env
 DATABASE_URL=postgres://...
-BELLA_PUBLIC_API_URL=https://app.bellalabs.ai/api
-BELLA_WEB_URL=https://app.bellalabs.ai
+BELLA_PUBLIC_API_URL=https://<bella-domain>/api
+BELLA_WEB_URL=https://<bella-domain>
 BELLA_SECURE_COOKIES=true
 BELLA_CREDENTIAL_ENCRYPTION_KEY=base64-encoded-32-byte-key
 GITHUB_OAUTH_CLIENT_ID=...
@@ -109,8 +111,8 @@ Create a GitHub OAuth app for each environment.
 Production:
 
 ```text
-Homepage URL: https://app.bellalabs.ai
-Authorization callback URL: https://app.bellalabs.ai/api/v1/auth/github/callback
+Homepage URL: https://<bella-domain>
+Authorization callback URL: https://<bella-domain>/api/v1/auth/github/callback
 ```
 
 The callback must match `BELLA_PUBLIC_API_URL` plus
@@ -133,7 +135,7 @@ Minimum requirements:
 ## Deployment Checklist
 
 - HTTPS is enabled for the public domain.
-- DNS points `app.bellalabs.ai` to the Hetzner VPS.
+- DNS points the chosen Bella Cloud domain to the Hetzner VPS.
 - `BELLA_SECURE_COOKIES=true`.
 - `BELLA_PUBLIC_API_URL` is externally reachable and uses `/api`.
 - `BELLA_WEB_URL` is the exact dashboard origin with no trailing path.
@@ -154,15 +156,15 @@ Minimum requirements:
 Run the HTTP smoke test after deploy:
 
 ```sh
-deploy/smoke-test.sh https://app.bellalabs.ai
+deploy/smoke-test.sh https://<bella-domain>
 ```
 
 Then validate authenticated flows:
 
 ```sh
-bella --api-base-url https://app.bellalabs.ai/api login
-bella --api-base-url https://app.bellalabs.ai/api whoami
-bella --api-base-url https://app.bellalabs.ai/api organizations list
-bella --api-base-url https://app.bellalabs.ai/api providers catalog
-bella --api-base-url https://app.bellalabs.ai/api logout
+bella --api-base-url https://<bella-domain>/api login
+bella --api-base-url https://<bella-domain>/api whoami
+bella --api-base-url https://<bella-domain>/api organizations list
+bella --api-base-url https://<bella-domain>/api providers catalog
+bella --api-base-url https://<bella-domain>/api logout
 ```
