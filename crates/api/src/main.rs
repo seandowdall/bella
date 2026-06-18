@@ -1,4 +1,5 @@
 mod agent;
+mod agent_settings;
 mod auth;
 mod credentials;
 mod organizations;
@@ -151,6 +152,19 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/organizations/:organization_id/agent/messages",
             post(agent::message),
+        )
+        .route(
+            "/v1/organizations/:organization_id/agent/settings",
+            get(agent_settings::list_settings).post(agent_settings::create_settings),
+        )
+        .route(
+            "/v1/organizations/:organization_id/agent/settings/:setting_id",
+            axum::routing::put(agent_settings::update_settings)
+                .delete(agent_settings::delete_settings),
+        )
+        .route(
+            "/v1/organizations/:organization_id/agent/settings/:setting_id/default",
+            post(agent_settings::set_default),
         )
         .with_state(AppState {
             db,

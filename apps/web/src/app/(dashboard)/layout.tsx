@@ -82,9 +82,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
           variant="inset"
         />
         <SidebarInset>
-          <SiteHeader
-            organization={selectedOrganization}
-          />
+          <SiteHeader />
           <div className="@container/main flex flex-1 flex-col gap-4 p-4 lg:p-6">
             {children}
           </div>
