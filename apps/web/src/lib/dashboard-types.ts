@@ -90,7 +90,9 @@ export type SyncOutcome = {
 export type AgentMessage = {
   role: 'user' | 'assistant'
   content: string
+  model_options?: AgentLlmSettings[]
   freshness?: string | null
+  agent_mode?: 'deterministic' | 'llm_assisted'
   metric_type?: 'provider_reported' | 'estimated_live' | 'reconciled' | 'finalized'
   sources?: string[]
   suggestions?: string[]
@@ -100,6 +102,23 @@ export type AgentMessageResponse = {
   answer: string
   metric_type: 'provider_reported' | 'estimated_live' | 'reconciled' | 'finalized'
   freshness: string | null
+  agent_mode: 'deterministic' | 'llm_assisted'
   sources: string[]
   suggestions: string[]
+}
+
+export type AgentLlmSettings = {
+  id: string
+  display_name: string
+  provider: 'openai' | 'anthropic'
+  model: string
+  base_url: string | null
+  credential_fingerprint: string
+  is_default: boolean
+}
+
+export type AgentLlmSettingsList = {
+  items: AgentLlmSettings[]
+  default_id: string | null
+  mode: 'deterministic' | 'llm_assisted'
 }

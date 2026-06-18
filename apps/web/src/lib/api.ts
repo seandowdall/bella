@@ -1,5 +1,7 @@
 import type {
   Organization,
+  AgentLlmSettings,
+  AgentLlmSettingsList,
   AgentMessageResponse,
   ProviderAccount,
   ProviderDefinition,
@@ -105,12 +107,13 @@ export async function connectProviderAccount({
 
 async function errorMessage(response: Response, fallback: string) {
   const text = await response.text()
-  if (!text) return fallback
+  const fallbackWithStatus = `${fallback} HTTP ${response.status}.`
+  if (!text) return fallbackWithStatus
   try {
     const body = JSON.parse(text) as { error?: string }
-    return body.error ?? fallback
+    return body.error ?? fallbackWithStatus
   } catch {
-    return fallback
+    return fallbackWithStatus
   }
 }
 
@@ -194,9 +197,13 @@ export async function getUsageSummary({
 export async function sendAgentMessage({
   organizationId,
   message,
+  llmSettingId,
+  signal,
 }: {
   organizationId: string
   message: string
+  llmSettingId?: string
+  signal?: AbortSignal
 }): Promise<AgentMessageResponse> {
   const response = await fetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/agent/messages`,
@@ -204,7 +211,8 @@ export async function sendAgentMessage({
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, llm_setting_id: llmSettingId ?? null }),
+      signal,
     },
   )
   if (!response.ok) {
@@ -216,6 +224,111 @@ export async function sendAgentMessage({
     )
   }
   return response.json() as Promise<AgentMessageResponse>
+}
+
+export async function getAgentLlmSettings(
+  organizationId: string,
+): Promise<AgentLlmSettingsList> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/agent/settings`,
+    { credentials: "include" },
+  )
+  if (!response.ok) {
+    throw new Error(
+      await errorMessage(
+        response,
+        "Could not load AI settings. Restart the API on this branch so the agent settings route and migration are available.",
+      ),
+    )
+  }
+  const body = (await response.json()) as AgentLlmSettingsList | AgentLlmSettings
+  if ("items" in body && Array.isArray(body.items)) {
+    return body
+  }
+  if ("id" in body) {
+    return {
+      items: [body],
+      default_id: body.id,
+      mode: "llm_assisted",
+    }
+  }
+  return { items: [], default_id: null, mode: "deterministic" }
+}
+
+export async function saveAgentLlmSettings({
+  organizationId,
+  settingId,
+  displayName,
+  provider,
+  model,
+  baseUrl,
+  apiKey,
+  isDefault,
+}: {
+  organizationId: string
+  settingId?: string
+  displayName: string
+  provider: AgentLlmSettings["provider"]
+  model: string
+  baseUrl: string
+  apiKey: string
+  isDefault: boolean
+}): Promise<AgentLlmSettings> {
+  const response = await fetch(
+    settingId
+      ? `${apiBaseUrl}/v1/organizations/${organizationId}/agent/settings/${settingId}`
+      : `${apiBaseUrl}/v1/organizations/${organizationId}/agent/settings`,
+    {
+      method: settingId ? "PUT" : "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        display_name: displayName,
+        provider,
+        model,
+        base_url: baseUrl.trim() || null,
+        api_key: apiKey.trim() || null,
+        is_default: isDefault,
+      }),
+    },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not save AI settings."))
+  }
+  return response.json() as Promise<AgentLlmSettings>
+}
+
+export async function deleteAgentLlmSettings(
+  organizationId: string,
+  settingId: string,
+): Promise<void> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/agent/settings/${settingId}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not remove AI settings."))
+  }
+}
+
+export async function setDefaultAgentLlmSettings(
+  organizationId: string,
+  settingId: string,
+): Promise<AgentLlmSettings> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/agent/settings/${settingId}/default`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not set the default AI model."))
+  }
+  return response.json() as Promise<AgentLlmSettings>
 }
 
 export function getLoginUrl(): string {

@@ -1,134 +1,207 @@
 "use client"
 
-import { FormEvent, useState } from "react"
-import { ArrowRightIcon } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
-import { Spinner } from "@/components/ui/spinner"
-import { sendAgentMessage } from "@/lib/api"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
+import {
+  AssistantRuntimeProvider,
+  useLocalRuntime,
+  type ChatModelAdapter,
+  type ThreadMessage,
+} from "@assistant-ui/react"
+import { BotIcon } from "lucide-react"
+import {
+  ModelSelector,
+  type ModelOption,
+} from "@/components/assistant-ui/model-selector"
+import { Thread } from "@/components/assistant-ui/thread"
+import { getAgentLlmSettings, sendAgentMessage } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
-import type { AgentMessage } from "@/lib/dashboard-types"
+import type { AgentLlmSettings } from "@/lib/dashboard-types"
 
-const initialMessage: AgentMessage = {
-  role: "assistant",
-  content:
-    "Ask me about AI spend, provider usage, model breakdowns, and sync freshness.",
-  metric_type: "provider_reported",
-  sources: ["cost_snapshots", "usage_buckets", "provider_accounts"],
+const suggestions = [
+  { prompt: "Summarize AI spend for the last 30 days" },
+  { prompt: "Break down spend by provider" },
+  { prompt: "Show model usage trends" },
+  { prompt: "Check provider sync freshness" },
+]
+
+const slashCommands: Record<string, string> = {
+  "/summary": "Summarize AI spend for the last 30 days",
+  "/overview": "Summarize AI spend for the last 30 days",
+  "/providers": "Break down spend by provider",
+  "/models": "Break down spend and usage by model",
+  "/sync": "Check provider sync freshness",
+  "/help":
+    "Show the Bella chat commands for spend, provider usage, model breakdowns, and sync freshness",
 }
 
 export default function HomePage() {
   const { selectedOrganization } = useAuth()
-  const [input, setInput] = useState("")
-  const [messages, setMessages] = useState<AgentMessage[]>([initialMessage])
-  const [sending, setSending] = useState(false)
+  const [models, setModels] = useState<AgentLlmSettings[]>([])
+  const [modelId, setModelId] = useState<string>()
 
-  const askBella = async (message: string) => {
-    if (!selectedOrganization || !message.trim()) return
-    const userMessage: AgentMessage = {
-      role: "user",
-      content: message.trim(),
-    }
-    setMessages((current) => [...current, userMessage])
-    setInput("")
-    setSending(true)
-    try {
-      const response = await sendAgentMessage({
-        organizationId: selectedOrganization.id,
-        message: userMessage.content,
-      })
-      setMessages((current) => [
-        ...current,
-        {
-          role: "assistant",
-          content: response.answer,
-          freshness: response.freshness,
-          metric_type: response.metric_type,
-          sources: response.sources,
-          suggestions: response.suggestions,
-        },
-      ])
-    } catch (e) {
-      setMessages((current) => [
-        ...current,
-        {
-          role: "assistant",
-          content:
-            e instanceof Error
-              ? e.message
-              : "Bella could not reach the agent API. Restart the API on this branch and try again.",
-        },
-      ])
-    } finally {
-      setSending(false)
-    }
-  }
+  useEffect(() => {
+    if (!selectedOrganization) return
+    let cancelled = false
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    void askBella(input)
-  }
+    const loadModels = async () => {
+      const settings = await getAgentLlmSettings(selectedOrganization.id)
+      if (cancelled) return
+      setModels(settings.items)
+      setModelId((current) => current ?? settings.default_id ?? undefined)
+    }
+
+    void loadModels()
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedOrganization])
+
+  const modelOptions = useMemo<ModelOption[]>(
+    () =>
+      models.map((model) => ({
+        id: model.id,
+        name: model.display_name,
+        description: `${model.provider} ${model.model}${model.is_default ? " default" : ""}`,
+        icon: <BotIcon />,
+        keywords: [model.provider, model.model],
+      })),
+    [models],
+  )
 
   return (
-    <div className="-m-4 flex min-h-[calc(100svh-var(--header-height))] flex-1 flex-col bg-black px-4 py-6 lg:-m-6 lg:px-6">
-      <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col">
-        <div className="flex flex-1 flex-col gap-4 overflow-y-auto pb-6">
-          {messages.map((message, index) => (
-            <MessageBubble key={index} message={message} />
-          ))}
-          {sending && (
-            <div className="flex items-center gap-2 text-sm text-zinc-500">
-              <Spinner />
-              Bella is checking provider data...
-            </div>
-          )}
-        </div>
-        <form
-          onSubmit={handleSubmit}
-          className="sticky bottom-0 flex rounded-2xl border border-zinc-700 bg-zinc-950/95 p-2 shadow-2xl shadow-black/50 focus-within:border-primary"
-        >
-          <Textarea
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            placeholder="Ask Bella about AI spend, models, providers, or sync health..."
-            className="min-h-14 flex-1 resize-none border-0 bg-transparent px-3 py-4 text-base text-white shadow-none outline-none placeholder:text-zinc-500 focus-visible:ring-0"
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault()
-                void askBella(input)
-              }
-            }}
-          />
-          <Button
-            type="submit"
-            disabled={sending || !input.trim()}
-            className="h-auto min-h-14 w-14 self-stretch rounded-xl"
-            aria-label="Send message"
-          >
-            {sending ? <Spinner /> : <ArrowRightIcon />}
-          </Button>
-        </form>
+    <BellaRuntimeProvider organizationId={selectedOrganization?.id}>
+      <div className="-m-4 flex min-h-[calc(100svh-var(--header-height))] flex-1 flex-col bg-black lg:-m-6">
+        <Thread
+          components={{
+            ComposerAccessory: () => (
+              <BellaModelSelector
+                models={modelOptions}
+                value={modelId}
+                onValueChange={setModelId}
+              />
+            ),
+            Welcome: BellaWelcome,
+          }}
+        />
       </div>
+    </BellaRuntimeProvider>
+  )
+}
+
+function BellaRuntimeProvider({
+  organizationId,
+  children,
+}: {
+  organizationId?: string
+  children: ReactNode
+}) {
+  const adapter = useMemo<ChatModelAdapter>(
+    () => ({
+      async run({ messages, abortSignal, context }) {
+        if (!organizationId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Select an organization before asking Bella a question.",
+              },
+            ],
+          }
+        }
+
+        abortSignal.throwIfAborted()
+        const message = normalizePrompt(lastTextMessage(messages))
+        const modelName = context.config?.modelName
+        const llmSettingId = typeof modelName === "string" ? modelName : undefined
+        const response = await sendAgentMessage({
+          organizationId,
+          message,
+          llmSettingId,
+          signal: abortSignal,
+        })
+
+        return {
+          content: [{ type: "text", text: response.answer }],
+          metadata: {
+            custom: {
+              agentMode: response.agent_mode,
+              freshness: response.freshness,
+              metricType: response.metric_type,
+              sources: response.sources,
+              suggestions: response.suggestions,
+            },
+          },
+        }
+      },
+    }),
+    [organizationId],
+  )
+
+  const runtime = useLocalRuntime(adapter, {
+    adapters: {
+      suggestion: {
+        generate: async () => suggestions,
+      },
+    },
+  })
+
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      {children}
+    </AssistantRuntimeProvider>
+  )
+}
+
+function BellaModelSelector({
+  models,
+  value,
+  onValueChange,
+}: {
+  models: ModelOption[]
+  value?: string
+  onValueChange: (value: string) => void
+}) {
+  if (!models.length) return null
+
+  return (
+    <ModelSelector
+      models={models}
+      value={value}
+      onValueChange={onValueChange}
+      variant="ghost"
+      size="sm"
+      searchable
+      className="text-muted-foreground hover:text-foreground"
+      contentClassName="w-80"
+    />
+  )
+}
+
+function BellaWelcome() {
+  return (
+    <div className="mb-6 flex flex-col items-center px-4 text-center">
+      <p className="mb-2 text-sm font-medium tracking-[0.18em] text-muted-foreground uppercase">
+        Bella
+      </p>
+      <h1 className="text-2xl font-semibold tracking-tight">
+        Ask about AI spend, models, providers, and sync health.
+      </h1>
     </div>
   )
 }
 
-function MessageBubble({ message }: { message: AgentMessage }) {
-  const isAssistant = message.role === "assistant"
-  return (
-    <div className={isAssistant ? "flex justify-start" : "flex justify-end"}>
-      <div
-        className={
-          isAssistant
-            ? "max-w-[80%] rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-zinc-100"
-            : "max-w-[80%] rounded-2xl bg-white px-4 py-3 text-black"
-        }
-      >
-        <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
-        {message.freshness && (
-          <p className="mt-2 text-xs text-zinc-500">{message.freshness}</p>
-        )}
-      </div>
-    </div>
-  )
+function lastTextMessage(messages: readonly ThreadMessage[]) {
+  const message = messages.findLast((item) => item.role === "user")
+  if (!message) return ""
+
+  return message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n")
+}
+
+function normalizePrompt(prompt: string) {
+  const trimmed = prompt.trim()
+  return slashCommands[trimmed.toLowerCase()] ?? trimmed
 }

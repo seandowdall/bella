@@ -6,18 +6,20 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use chrono::{DateTime, Duration, Utc};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap as ReqwestHeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use uuid::Uuid;
 
 use crate::{
-    AppState,
+    AppState, agent_settings,
     auth::{AuthError, authenticated_user},
 };
 
 #[derive(Debug, Deserialize)]
 pub struct AgentMessageRequest {
     message: String,
+    llm_setting_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
@@ -25,6 +27,7 @@ pub struct AgentMessageResponse {
     answer: String,
     metric_type: &'static str,
     freshness: Option<String>,
+    agent_mode: &'static str,
     sources: Vec<&'static str>,
     suggestions: Vec<&'static str>,
 }
@@ -40,15 +43,183 @@ pub async fn message(
     require_membership(&state, user.id, organization_id).await?;
 
     let normalized = request.message.to_lowercase();
-    let response = if asks_about_sync(&normalized) {
+    let mut response = if asks_about_sync(&normalized) {
         sync_status_answer(&state, organization_id).await?
     } else if asks_about_breakdown(&normalized) {
         breakdown_answer(&state, organization_id, days_for_question(&normalized)).await?
     } else {
         spend_answer(&state, organization_id, days_for_question(&normalized)).await?
     };
+    if let Some(config) =
+        agent_settings::load_agent_llm_config(&state, organization_id, request.llm_setting_id)
+            .await
+            .map_err(|error| AgentError::Llm(error.to_string()))?
+    {
+        response.answer = llm_assisted_answer(&state, &config, &request.message, &response).await?;
+        response.agent_mode = "llm_assisted";
+    }
 
     Ok(Json(response))
+}
+
+async fn llm_assisted_answer(
+    state: &AppState,
+    config: &agent_settings::AgentLlmConfig,
+    user_message: &str,
+    deterministic: &AgentMessageResponse,
+) -> Result<String, AgentError> {
+    let prompt = format!(
+        "User question:\n{user_message}\n\nTrusted Bella tool result:\n{}\n\nFreshness:\n{}\n\nSources:\n{}",
+        deterministic.answer,
+        deterministic
+            .freshness
+            .as_deref()
+            .unwrap_or("No sync freshness available."),
+        deterministic.sources.join(", ")
+    );
+    match config.provider.as_str() {
+        "openai" => openai_answer(state, config, &prompt).await,
+        "anthropic" => anthropic_answer(state, config, &prompt).await,
+        _ => Err(AgentError::Llm(
+            "unsupported configured LLM provider".to_owned(),
+        )),
+    }
+}
+
+async fn openai_answer(
+    state: &AppState,
+    config: &agent_settings::AgentLlmConfig,
+    prompt: &str,
+) -> Result<String, AgentError> {
+    let base_url = config
+        .base_url
+        .as_deref()
+        .unwrap_or("https://api.openai.com")
+        .trim_end_matches('/')
+        .trim_end_matches("/v1");
+    let url = format!("{base_url}/v1/chat/completions");
+    let response = state
+        .provider_client
+        .post(url)
+        .bearer_auth(&config.api_key)
+        .json(&serde_json::json!({
+            "model": config.model,
+            "temperature": 0.2,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are Bella, an AI cost visibility assistant. Answer using only the trusted Bella tool result. Do not invent data. Be concise and call out provider-reported freshness when useful."
+                },
+                { "role": "user", "content": prompt }
+            ]
+        }))
+        .send()
+        .await
+        .map_err(|error| AgentError::Llm(error.to_string()))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(AgentError::Llm(format!(
+            "OpenAI BYOK request failed with HTTP {status}: {body}"
+        )));
+    }
+    let body: OpenAiChatResponse = response
+        .json()
+        .await
+        .map_err(|error| AgentError::Llm(error.to_string()))?;
+    body.choices
+        .into_iter()
+        .next()
+        .map(|choice| choice.message.content)
+        .filter(|content| !content.trim().is_empty())
+        .ok_or_else(|| AgentError::Llm("OpenAI returned an empty answer".to_owned()))
+}
+
+async fn anthropic_answer(
+    state: &AppState,
+    config: &agent_settings::AgentLlmConfig,
+    prompt: &str,
+) -> Result<String, AgentError> {
+    let base_url = config
+        .base_url
+        .as_deref()
+        .unwrap_or("https://api.anthropic.com")
+        .trim_end_matches('/')
+        .trim_end_matches("/v1");
+    let url = format!("{base_url}/v1/messages");
+    let mut headers = ReqwestHeaderMap::new();
+    headers.insert(
+        "x-api-key",
+        HeaderValue::from_str(&config.api_key)
+            .map_err(|error| AgentError::Llm(error.to_string()))?,
+    );
+    headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.remove(AUTHORIZATION);
+    let response = state
+        .provider_client
+        .post(url)
+        .headers(headers)
+        .json(&serde_json::json!({
+            "model": config.model,
+            "max_tokens": 600,
+            "temperature": 0.2,
+            "system": "You are Bella, an AI cost visibility assistant. Answer using only the trusted Bella tool result. Do not invent data. Be concise and call out provider-reported freshness when useful.",
+            "messages": [
+                { "role": "user", "content": prompt }
+            ]
+        }))
+        .send()
+        .await
+        .map_err(|error| AgentError::Llm(error.to_string()))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(AgentError::Llm(format!(
+            "Anthropic BYOK request failed with HTTP {status}: {body}"
+        )));
+    }
+    let body: AnthropicMessageResponse = response
+        .json()
+        .await
+        .map_err(|error| AgentError::Llm(error.to_string()))?;
+    body.content
+        .into_iter()
+        .find_map(|part| match part {
+            AnthropicContent::Text { text } => Some(text),
+            AnthropicContent::Other => None,
+        })
+        .filter(|content| !content.trim().is_empty())
+        .ok_or_else(|| AgentError::Llm("Anthropic returned an empty answer".to_owned()))
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiChatResponse {
+    choices: Vec<OpenAiChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiChoice {
+    message: OpenAiMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiMessage {
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicMessageResponse {
+    content: Vec<AnthropicContent>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum AnthropicContent {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(other)]
+    Other,
 }
 
 async fn spend_answer(
@@ -101,6 +272,7 @@ async fn spend_answer(
         ),
         metric_type: "provider_reported",
         freshness,
+        agent_mode: "deterministic",
         sources: vec!["cost_snapshots", "usage_buckets", "provider_accounts"],
         suggestions: default_suggestions(),
     })
@@ -177,6 +349,7 @@ async fn breakdown_answer(
         answer,
         metric_type: "provider_reported",
         freshness: freshness(state, organization_id).await?,
+        agent_mode: "deterministic",
         sources: vec!["cost_snapshots", "usage_buckets"],
         suggestions: default_suggestions(),
     })
@@ -228,6 +401,7 @@ async fn sync_status_answer(
         answer,
         metric_type: "provider_reported",
         freshness: freshness(state, organization_id).await?,
+        agent_mode: "deterministic",
         sources: vec!["provider_accounts", "provider_sync_runs"],
         suggestions: default_suggestions(),
     })
@@ -326,6 +500,7 @@ fn default_suggestions() -> Vec<&'static str> {
 pub enum AgentError {
     Auth(AuthError),
     NotFound,
+    Llm(String),
     Database(sqlx::Error),
 }
 
@@ -350,6 +525,14 @@ impl IntoResponse for AgentError {
                 Json(serde_json::json!({ "error": "organization not found" })),
             )
                 .into_response(),
+            Self::Llm(error) => {
+                tracing::warn!(%error, "agent LLM request failed");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({ "error": format!("Bella could not use the configured BYOK model: {error}") })),
+                )
+                    .into_response()
+            }
             Self::Database(error) => {
                 tracing::error!(%error, "agent database error");
                 (
