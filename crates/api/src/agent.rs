@@ -91,16 +91,9 @@ async fn openai_answer(
     config: &agent_settings::AgentLlmConfig,
     prompt: &str,
 ) -> Result<String, AgentError> {
-    let base_url = config
-        .base_url
-        .as_deref()
-        .unwrap_or("https://api.openai.com")
-        .trim_end_matches('/')
-        .trim_end_matches("/v1");
-    let url = format!("{base_url}/v1/chat/completions");
     let response = state
         .provider_client
-        .post(url)
+        .post("https://api.openai.com/v1/chat/completions")
         .bearer_auth(&config.api_key)
         .json(&serde_json::json!({
             "model": config.model,
@@ -140,13 +133,6 @@ async fn anthropic_answer(
     config: &agent_settings::AgentLlmConfig,
     prompt: &str,
 ) -> Result<String, AgentError> {
-    let base_url = config
-        .base_url
-        .as_deref()
-        .unwrap_or("https://api.anthropic.com")
-        .trim_end_matches('/')
-        .trim_end_matches("/v1");
-    let url = format!("{base_url}/v1/messages");
     let mut headers = ReqwestHeaderMap::new();
     headers.insert(
         "x-api-key",
@@ -158,7 +144,7 @@ async fn anthropic_answer(
     headers.remove(AUTHORIZATION);
     let response = state
         .provider_client
-        .post(url)
+        .post("https://api.anthropic.com/v1/messages")
         .headers(headers)
         .json(&serde_json::json!({
             "model": config.model,

@@ -2,13 +2,12 @@
 
 import { FormEvent, useEffect, useState } from "react"
 import {
-  BotIcon,
   Building2Icon,
   MoreHorizontalIcon,
   PlusIcon,
   UserIcon,
 } from "lucide-react"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -192,86 +191,6 @@ export function OrganizationSettings({
   )
 }
 
-export function AiSettings({ organizationId }: { organizationId?: string }) {
-  const [mode, setMode] = useState<"deterministic" | "llm_assisted">("deterministic")
-  const [defaultModel, setDefaultModel] = useState<AgentLlmSettings>()
-  const [error, setError] = useState("")
-
-  useEffect(() => {
-    if (!organizationId) return
-    const load = async () => {
-      setError("")
-      try {
-        const settings = await getAgentLlmSettings(organizationId)
-        setMode(settings.mode)
-        setDefaultModel(settings.items?.find((item) => item.is_default))
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not load AI settings.")
-      }
-    }
-    void load()
-  }, [organizationId])
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex flex-col gap-1.5">
-            <CardTitle className="flex items-center gap-2">
-              <BotIcon />
-              AI
-            </CardTitle>
-            <CardDescription>
-              Choose how Bella answers product questions from provider data.
-            </CardDescription>
-          </div>
-          <Badge variant="secondary">
-            {mode === "llm_assisted" ? "LLM assisted" : "Deterministic"}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-        <Alert>
-          <BotIcon />
-          <AlertTitle>Current mode</AlertTitle>
-          <AlertDescription>
-            {mode === "llm_assisted"
-              ? `Bella defaults to ${defaultModel?.display_name ?? "a BYOK model"} (${defaultModel?.provider ?? "provider"} ${defaultModel?.model ?? "model"}). Deterministic tools remain the trusted data layer for spend, breakdowns, and sync freshness.`
-              : "Bella is using deterministic server-side tools for spend, provider/model breakdowns, and sync freshness. BYOK will enable richer LLM-assisted explanations without bypassing those tools."}
-          </AlertDescription>
-        </Alert>
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="agent-mode">Agent mode</FieldLabel>
-            <Select value={mode} disabled>
-              <SelectTrigger id="agent-mode">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="deterministic">
-                    Deterministic tools only
-                  </SelectItem>
-                  <SelectItem value="llm_assisted">LLM assisted</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <FieldDescription>
-              LLM-assisted mode will use the configured BYOK provider once the
-              server-side credential flow is connected.
-            </FieldDescription>
-          </Field>
-        </FieldGroup>
-      </CardContent>
-    </Card>
-  )
-}
-
 export function ByokSettings({
   organizationId,
   canManage,
@@ -352,7 +271,6 @@ export function ByokSettings({
         displayName: displayName.trim() || model,
         provider,
         model,
-        baseUrl: "",
         apiKey,
         isDefault: !configured || Boolean(editing?.is_default),
       })

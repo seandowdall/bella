@@ -28,7 +28,6 @@ pub struct AgentLlmSettingsResponse {
     display_name: String,
     provider: String,
     model: String,
-    base_url: Option<String>,
     credential_fingerprint: String,
     is_default: bool,
 }
@@ -37,7 +36,6 @@ pub struct AgentLlmSettingsResponse {
 pub struct AgentLlmConfig {
     pub provider: String,
     pub model: String,
-    pub base_url: Option<String>,
     pub api_key: String,
 }
 
@@ -46,7 +44,6 @@ pub struct SaveAgentLlmSettingsRequest {
     display_name: String,
     provider: String,
     model: String,
-    base_url: Option<String>,
     api_key: Option<String>,
     is_default: Option<bool>,
 }
@@ -90,11 +87,11 @@ pub async fn create_settings(
     }
     let row = sqlx::query(
         "insert into organization_agent_llm_settings
-           (id, organization_id, display_name, provider, model, base_url,
+           (id, organization_id, display_name, provider, model,
             api_key_ciphertext, api_key_nonce, api_key_fingerprint,
             is_default, created_by, updated_by)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
-         returning id, display_name, provider, model, base_url,
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+         returning id, display_name, provider, model,
                    api_key_fingerprint, is_default",
     )
     .bind(setting_id)
@@ -102,7 +99,6 @@ pub async fn create_settings(
     .bind(values.display_name)
     .bind(values.provider)
     .bind(values.model)
-    .bind(values.base_url)
     .bind(encrypted.ciphertext)
     .bind(encrypted.nonce)
     .bind(encrypted.fingerprint)
@@ -143,23 +139,21 @@ pub async fn update_settings(
     let row = sqlx::query(
         "update organization_agent_llm_settings
          set display_name = $1,
-             provider = $2,
-             model = $3,
-             base_url = $4,
-             api_key_ciphertext = coalesce($5, api_key_ciphertext),
-             api_key_nonce = coalesce($6, api_key_nonce),
-             api_key_fingerprint = coalesce($7, api_key_fingerprint),
-             is_default = case when $8 then true else is_default end,
-             updated_by = $9,
-             updated_at = now()
-         where organization_id = $10 and id = $11
-         returning id, display_name, provider, model, base_url,
-                   api_key_fingerprint, is_default",
+              provider = $2,
+              model = $3,
+              api_key_ciphertext = coalesce($4, api_key_ciphertext),
+              api_key_nonce = coalesce($5, api_key_nonce),
+              api_key_fingerprint = coalesce($6, api_key_fingerprint),
+              is_default = case when $7 then true else is_default end,
+              updated_by = $8,
+              updated_at = now()
+         where organization_id = $9 and id = $10
+         returning id, display_name, provider, model,
+                    api_key_fingerprint, is_default",
     )
     .bind(values.display_name)
     .bind(values.provider)
     .bind(values.model)
-    .bind(values.base_url)
     .bind(encrypted.as_ref().map(|value| value.ciphertext.as_slice()))
     .bind(encrypted.as_ref().map(|value| value.nonce.as_slice()))
     .bind(encrypted.as_ref().map(|value| value.fingerprint.as_str()))
@@ -238,8 +232,8 @@ pub async fn set_default(
         "update organization_agent_llm_settings
          set is_default = true, updated_by = $1, updated_at = now()
          where organization_id = $2 and id = $3
-         returning id, display_name, provider, model, base_url,
-                   api_key_fingerprint, is_default",
+         returning id, display_name, provider, model,
+                    api_key_fingerprint, is_default",
     )
     .bind(user.id)
     .bind(organization_id)
@@ -258,7 +252,7 @@ pub async fn load_agent_llm_config(
 ) -> Result<Option<AgentLlmConfig>, anyhow::Error> {
     let row = if let Some(setting_id) = setting_id {
         sqlx::query(
-            "select provider, model, base_url, api_key_ciphertext, api_key_nonce
+            "select provider, model, api_key_ciphertext, api_key_nonce
              from organization_agent_llm_settings
              where organization_id = $1 and id = $2",
         )
@@ -268,7 +262,7 @@ pub async fn load_agent_llm_config(
         .await?
     } else {
         sqlx::query(
-            "select provider, model, base_url, api_key_ciphertext, api_key_nonce
+            "select provider, model, api_key_ciphertext, api_key_nonce
              from organization_agent_llm_settings
              where organization_id = $1 and is_default
              limit 1",
@@ -290,7 +284,6 @@ pub async fn load_agent_llm_config(
     Ok(Some(AgentLlmConfig {
         provider: row.try_get("provider")?,
         model: row.try_get("model")?,
-        base_url: row.try_get("base_url")?,
         api_key,
     }))
 }
@@ -300,7 +293,7 @@ async fn load_settings(
     organization_id: Uuid,
 ) -> Result<AgentLlmSettingsListResponse, AgentSettingsError> {
     let rows = sqlx::query(
-        "select id, display_name, provider, model, base_url,
+        "select id, display_name, provider, model,
                 api_key_fingerprint, is_default
          from organization_agent_llm_settings
          where organization_id = $1
@@ -355,7 +348,6 @@ struct NormalizedSettings {
     display_name: String,
     provider: String,
     model: String,
-    base_url: Option<String>,
 }
 
 struct EncryptedApiKey {
@@ -371,7 +363,6 @@ fn normalized_values(
         display_name: normalize_display_name(&request.display_name)?,
         provider: normalize_provider(&request.provider)?,
         model: normalize_model(&request.model)?,
-        base_url: normalize_base_url(request.base_url.as_deref())?,
     })
 }
 
@@ -424,7 +415,6 @@ fn settings_from_row(row: &sqlx::postgres::PgRow) -> Result<AgentLlmSettingsResp
         display_name: row.try_get("display_name")?,
         provider: row.try_get("provider")?,
         model: row.try_get("model")?,
-        base_url: row.try_get("base_url")?,
         credential_fingerprint: row.try_get("api_key_fingerprint")?,
         is_default: row.try_get("is_default")?,
     })
@@ -457,23 +447,6 @@ fn normalize_model(value: &str) -> Result<String, AgentSettingsError> {
         ));
     }
     Ok(model)
-}
-
-fn normalize_base_url(value: Option<&str>) -> Result<Option<String>, AgentSettingsError> {
-    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(None);
-    };
-    if value.len() > 500 {
-        return Err(AgentSettingsError::BadRequest("base_url is too long"));
-    }
-    let url = reqwest::Url::parse(value)
-        .map_err(|_| AgentSettingsError::BadRequest("base_url must be a valid URL"))?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(AgentSettingsError::BadRequest(
-            "base_url must use http or https",
-        ));
-    }
-    Ok(Some(value.to_owned()))
 }
 
 #[derive(Debug)]
@@ -541,7 +514,7 @@ impl IntoResponse for AgentSettingsError {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_base_url, normalize_display_name, normalize_model, normalize_provider};
+    use super::{normalize_display_name, normalize_model, normalize_provider};
 
     #[test]
     fn validates_supported_providers() {
@@ -558,16 +531,5 @@ mod tests {
         assert_eq!(normalize_model(" gpt-4.1   mini ").unwrap(), "gpt-4.1 mini");
         assert!(normalize_display_name("").is_err());
         assert!(normalize_model("").is_err());
-    }
-
-    #[test]
-    fn validates_base_urls() {
-        assert_eq!(normalize_base_url(None).unwrap(), None);
-        assert!(
-            normalize_base_url(Some("https://api.openai.com"))
-                .unwrap()
-                .is_some()
-        );
-        assert!(normalize_base_url(Some("ftp://example.com")).is_err());
     }
 }

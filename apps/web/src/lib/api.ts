@@ -261,7 +261,6 @@ export async function saveAgentLlmSettings({
   displayName,
   provider,
   model,
-  baseUrl,
   apiKey,
   isDefault,
 }: {
@@ -270,7 +269,6 @@ export async function saveAgentLlmSettings({
   displayName: string
   provider: AgentLlmSettings["provider"]
   model: string
-  baseUrl: string
   apiKey: string
   isDefault: boolean
 }): Promise<AgentLlmSettings> {
@@ -286,7 +284,6 @@ export async function saveAgentLlmSettings({
         display_name: displayName,
         provider,
         model,
-        base_url: baseUrl.trim() || null,
         api_key: apiKey.trim() || null,
         is_default: isDefault,
       }),
