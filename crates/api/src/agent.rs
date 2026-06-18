@@ -111,9 +111,9 @@ async fn openai_answer(
         .map_err(|error| AgentError::Llm(error.to_string()))?;
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        tracing::warn!(%status, "OpenAI BYOK request failed");
         return Err(AgentError::Llm(format!(
-            "OpenAI BYOK request failed with HTTP {status}: {body}"
+            "OpenAI BYOK request failed with HTTP {status}"
         )));
     }
     let body: OpenAiChatResponse = response
@@ -160,9 +160,9 @@ async fn anthropic_answer(
         .map_err(|error| AgentError::Llm(error.to_string()))?;
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        tracing::warn!(%status, "Anthropic BYOK request failed");
         return Err(AgentError::Llm(format!(
-            "Anthropic BYOK request failed with HTTP {status}: {body}"
+            "Anthropic BYOK request failed with HTTP {status}"
         )));
     }
     let body: AnthropicMessageResponse = response
