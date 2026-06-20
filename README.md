@@ -9,13 +9,15 @@ crates/core      Shared domain types
 crates/api       Axum HTTP API
 crates/db        Postgres connection, migrations, and query helpers
 crates/cli       Local command-line client
-crates/mcp       MCP server placeholder
-crates/worker    Async job worker placeholder
-apps/web         Vite/React dashboard for app.bellalabs.ai
-apps/site        Vite landing page for bellalabs.ai
+crates/ingestion Provider usage and cost ingestion
+crates/mcp       MCP server
+crates/sandbox   Local provider sandbox
+crates/worker    Scheduled provider ingestion worker
+apps/web         Next.js dashboard for app.bellalabs.ai
+apps/site        Next.js landing page for bellalabs.ai
 apps/docs        Contributor and self-hosting documentation
 packages/openapi API contract placeholder
-packages/bella-* TypeScript SDK packages
+packages/bella-* TypeScript SDK packages for Bella usage events
 packages/*       Shared package placeholders
 ```
 
@@ -48,6 +50,8 @@ just site         # run the public landing page
 just cli --help   # run the Bella CLI
 just verify       # fmt, check, clippy, test
 just stop         # stop Docker services
+bun run build:sdks     # build TypeScript SDK packages
+bun run typecheck:sdks # typecheck TypeScript SDK packages
 ```
 
 Health check:
@@ -111,6 +115,33 @@ Full setup guides:
 - [Contributor OAuth setup](apps/docs/contributors/github-oauth.md)
 - [Self-hosted OAuth setup](apps/docs/self-hosting/github-oauth.md)
 - [OpenAI ingestion](apps/docs/ingestion/openai.md)
+
+## SDKs
+
+Bella includes TypeScript SDK packages for recording LLM usage events through
+the API:
+
+- `@bella/core`: shared transport, event types, and API errors.
+- `@bella/server`: Node/server SDK for wrapping LLM calls and recording usage.
+- `@bella/web`: browser SDK for identity/context and lightweight telemetry.
+
+The server SDK is the production dogfood path for TypeScript services. It fails
+open by default so Bella ingestion outages do not break customer LLM calls, and
+it does not send prompts, completions, or provider API keys unless explicitly
+added as metadata by the caller.
+
+For hosted dogfooding, configure server-side services with:
+
+```text
+BELLA_API_KEY=...
+BELLA_API_URL=https://api.example.com
+BELLA_ORGANIZATION_ID=...
+BELLA_PROVIDER_ACCOUNT_ID=...
+BELLA_PROVIDER=openai
+BELLA_SDK_FAIL_OPEN=true
+```
+
+See [SDK package docs](packages/README.md) for quickstart examples.
 
 ## Organizations
 
