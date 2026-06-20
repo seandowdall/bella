@@ -15,8 +15,8 @@ apps/web         Vite/React dashboard for app.bellalabs.ai
 apps/site        Vite landing page for bellalabs.ai
 apps/docs        Contributor and self-hosting documentation
 packages/openapi API contract placeholder
+packages/bella-* TypeScript SDK packages
 packages/*       Shared package placeholders
-sdks             Client SDK placeholders
 examples         Example integration placeholders
 ```
 
