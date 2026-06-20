@@ -1,0 +1,48 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "bella",
+      "devDependencies": {
+        "typescript": "~6.0.2",
+      },
+    },
+    "packages/bella-core": {
+      "name": "@bella/core",
+      "version": "0.1.0",
+      "devDependencies": {
+        "typescript": "~6.0.2",
+      },
+    },
+    "packages/bella-server": {
+      "name": "@bella/server",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bella/core": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "~6.0.2",
+      },
+    },
+    "packages/bella-web": {
+      "name": "@bella/web",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bella/core": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "~6.0.2",
+      },
+    },
+  },
+  "packages": {
+    "@bella/core": ["@bella/core@workspace:packages/bella-core"],
+
+    "@bella/server": ["@bella/server@workspace:packages/bella-server"],
+
+    "@bella/web": ["@bella/web@workspace:packages/bella-web"],
+
+    "typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
+  }
+}
