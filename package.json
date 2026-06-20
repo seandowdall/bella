@@ -5,7 +5,8 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "build:sdks": "bun run --filter '@bella/*' build",
-    "typecheck:sdks": "bun run --filter '@bella/*' typecheck"
+    "typecheck:sdks": "bun run --filter '@bella/*' typecheck",
+    "test:go-sdk": "cd packages/bella-go && go test ./..."
   },
   "devDependencies": {
     "typescript": "~6.0.2"

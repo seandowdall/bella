@@ -1,10 +1,11 @@
 # Bella SDK Packages
 
-The SDKs live in this monorepo for the MVP, but each package is structured as a publishable TypeScript package.
+The SDKs live in this monorepo for the MVP, but each package is structured as a publishable package.
 
 - `@bella/core`: shared transport, event types, and errors.
 - `@bella/server`: Node/server SDK for wrapping LLM calls and recording usage.
 - `@bella/web`: browser SDK for identity/context and lightweight telemetry.
+- `github.com/seandowdall/bella/packages/bella-go`: Go server SDK for wrapping LLM calls and recording usage.
 
 ## Server MVP
 

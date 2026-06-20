@@ -18,6 +18,7 @@ apps/site        Next.js landing page for bellalabs.ai
 apps/docs        Contributor and self-hosting documentation
 packages/openapi API contract placeholder
 packages/bella-* TypeScript SDK packages for Bella usage events
+packages/bella-go Go SDK package for Bella usage events
 packages/*       Shared package placeholders
 ```
 
@@ -52,6 +53,7 @@ just verify       # fmt, check, clippy, test
 just stop         # stop Docker services
 bun run build:sdks     # build TypeScript SDK packages
 bun run typecheck:sdks # typecheck TypeScript SDK packages
+bun run test:go-sdk    # test the Go SDK package
 ```
 
 Health check:
@@ -119,11 +121,12 @@ Full setup guides:
 ## SDKs
 
 Bella includes TypeScript SDK packages for recording LLM usage events through
-the API:
+the API, plus a Go SDK for server-side usage recording:
 
 - `@bella/core`: shared transport, event types, and API errors.
 - `@bella/server`: Node/server SDK for wrapping LLM calls and recording usage.
 - `@bella/web`: browser SDK for identity/context and lightweight telemetry.
+- `github.com/seandowdall/bella/packages/bella-go`: Go server SDK for wrapping LLM calls and recording usage.
 
 The server SDK is the production dogfood path for TypeScript services. It fails
 open by default so Bella ingestion outages do not break customer LLM calls, and
