@@ -17,7 +17,6 @@ apps/docs        Contributor and self-hosting documentation
 packages/openapi API contract placeholder
 packages/bella-* TypeScript SDK packages
 packages/*       Shared package placeholders
-examples         Example integration placeholders
 ```
 
 ## Local Postgres
