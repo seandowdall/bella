@@ -127,8 +127,8 @@ the API:
 
 The server SDK is the production dogfood path for TypeScript services. It fails
 open by default so Bella ingestion outages do not break customer LLM calls, and
-it does not send prompts, completions, or provider API keys unless explicitly
-added as metadata by the caller.
+it does not send prompts, completions, provider API keys, or raw error messages
+unless explicitly configured by the caller.
 
 For hosted dogfooding, configure server-side services with:
 
@@ -139,6 +139,7 @@ BELLA_ORGANIZATION_ID=...
 BELLA_PROVIDER_ACCOUNT_ID=...
 BELLA_PROVIDER=openai
 BELLA_SDK_FAIL_OPEN=true
+BELLA_SDK_CAPTURE_ERROR_MESSAGE=false
 ```
 
 See [SDK package docs](packages/README.md) for quickstart examples.

@@ -22,8 +22,11 @@ export interface BellaServerOptions extends BellaClientOptions {
   defaultProviderAccountId?: string;
   defaultProvider?: string;
   failOpen?: boolean;
+  captureErrorMessage?: CaptureErrorMessage;
   onIngestionError?: (error: unknown, event: BellaUsageEvent) => void;
 }
+
+export type CaptureErrorMessage = boolean | ((error: unknown) => string | undefined);
 
 export interface TrackLlmCallOptions<T> {
   providerAccountId?: string;
@@ -35,12 +38,14 @@ export interface TrackLlmCallOptions<T> {
   call: () => Promise<T>;
   usage?: (result: T) => BellaUsage | undefined;
   cost?: (result: T) => BellaCost | undefined;
+  captureErrorMessage?: CaptureErrorMessage;
 }
 
 export class BellaServer extends BellaClient {
   private readonly defaultProviderAccountId?: string;
   private readonly defaultProvider?: string;
   private readonly failOpen: boolean;
+  private readonly captureErrorMessage: CaptureErrorMessage;
   private readonly onIngestionError?: (error: unknown, event: BellaUsageEvent) => void;
 
   constructor(options: BellaServerOptions) {
@@ -48,6 +53,7 @@ export class BellaServer extends BellaClient {
     this.defaultProviderAccountId = options.defaultProviderAccountId;
     this.defaultProvider = options.defaultProvider;
     this.failOpen = options.failOpen ?? true;
+    this.captureErrorMessage = options.captureErrorMessage ?? false;
     this.onIngestionError = options.onIngestionError;
   }
 
@@ -90,7 +96,7 @@ export class BellaServer extends BellaClient {
         startedAt,
         endedAt: new Date(),
         metadata: options.metadata,
-        errorMessage: error instanceof Error ? error.message : String(error),
+        errorMessage: errorMessageFrom(error, options.captureErrorMessage ?? this.captureErrorMessage),
       });
       throw error;
     }
@@ -126,6 +132,7 @@ export function createBellaServerFromEnv(env: NodeEnv = readProcessEnv()): Bella
     defaultProviderAccountId: env.BELLA_PROVIDER_ACCOUNT_ID,
     defaultProvider: env.BELLA_PROVIDER ?? "openai",
     failOpen: env.BELLA_SDK_FAIL_OPEN !== "false",
+    captureErrorMessage: env.BELLA_SDK_CAPTURE_ERROR_MESSAGE === "true",
   });
 }
 
@@ -157,6 +164,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function errorMessageFrom(error: unknown, capture: CaptureErrorMessage): string | undefined {
+  if (typeof capture === "function") {
+    return truncate(capture(error));
+  }
+  if (!capture) {
+    return undefined;
+  }
+  return truncate(error instanceof Error ? error.message : String(error));
+}
+
+function truncate(value: string | undefined): string | undefined {
+  return value?.trim().slice(0, 1_000) || undefined;
+}
+
 interface NodeEnv {
   BELLA_API_KEY?: string;
   BELLA_API_URL?: string;
@@ -165,6 +186,7 @@ interface NodeEnv {
   BELLA_PROVIDER_ACCOUNT_ID?: string;
   BELLA_PROVIDER?: string;
   BELLA_SDK_FAIL_OPEN?: string;
+  BELLA_SDK_CAPTURE_ERROR_MESSAGE?: string;
 }
 
 function readProcessEnv(): NodeEnv {

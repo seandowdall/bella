@@ -49,7 +49,7 @@ const result = bella
   : await openai.chat.completions.create(request);
 ```
 
-The server SDK records timing, status, model, provider, token usage when the provider response includes a standard `usage` object, and error messages for failed calls. It does not send prompts, completions, or provider API keys by default.
+The server SDK records timing, status, model, provider, and token usage when the provider response includes a standard `usage` object. It does not send prompts, completions, provider API keys, or raw error messages by default.
 
 `trackLlmCall` fails open by default: if Bella ingestion is unavailable after a provider call succeeds, the provider result is still returned. Set `failOpen: false` if you want ingestion failures to throw.
 
@@ -65,6 +65,8 @@ BELLA_PROVIDER_ACCOUNT_ID=...
 BELLA_PROVIDER=openai
 # Optional. Defaults to true so Bella outages do not break production LLM calls.
 BELLA_SDK_FAIL_OPEN=true
+# Optional. Defaults to false to avoid leaking provider/client error details.
+BELLA_SDK_CAPTURE_ERROR_MESSAGE=false
 ```
 
 Use a Bella API token that belongs to the Bella team organization. The provider account id should point at the provider account you want dogfood usage attributed to.
