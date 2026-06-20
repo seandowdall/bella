@@ -6,6 +6,7 @@ mod organizations;
 mod provider_accounts;
 mod provider_validation;
 mod reporting;
+mod sdk_ingestion;
 
 use axum::{
     Json, Router,
@@ -148,6 +149,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/organizations/:organization_id/usage/summary",
             get(reporting::summary),
+        )
+        .route(
+            "/v1/organizations/:organization_id/sdk/usage-events",
+            post(sdk_ingestion::record_usage_event),
         )
         .route(
             "/v1/organizations/:organization_id/agent/messages",

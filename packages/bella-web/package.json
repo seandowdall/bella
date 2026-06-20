@@ -1,0 +1,24 @@
+{
+  "name": "@bella/web",
+  "version": "0.1.0",
+  "description": "Browser Bella SDK for identity, context, and lightweight telemetry.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@bella/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2"
+  }
+}
