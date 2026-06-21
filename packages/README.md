@@ -5,7 +5,7 @@ The SDKs live in this monorepo for the MVP, but each package is structured as a 
 - `@bella/core`: shared transport, event types, and errors.
 - `@bella/server`: Node/server SDK for wrapping LLM calls and recording usage.
 - `@bella/web`: browser SDK for identity/context and lightweight telemetry.
-- `github.com/seandowdall/bella/packages/bella-go`: Go server SDK for wrapping LLM calls and recording usage.
+- `github.com/seandowdall/bella/packages/bella-go`: Go server SDK for wrapping LLM calls and recording usage. See the [Go SDK README](bella-go/README.md) and [minimal Go example](bella-go/examples/openai/main.go).
 
 ## Server MVP
 
