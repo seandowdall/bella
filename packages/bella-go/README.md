@@ -7,6 +7,9 @@ when supplied by the caller, and returns the provider result unchanged. It does
 not send prompts, completions, provider API keys, or raw error messages by
 default.
 
+See [CONTRACT.md](CONTRACT.md) for the Go SDK contract mapped from the
+TypeScript SDK.
+
 ## Install
 
 ```sh
