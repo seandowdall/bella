@@ -2,7 +2,10 @@ mod agent;
 mod agent_settings;
 mod auth;
 mod credentials;
+mod incidents;
+mod integrations;
 mod organizations;
+mod posthog_ingestion;
 mod provider_accounts;
 mod provider_validation;
 mod reporting;
@@ -36,6 +39,7 @@ struct Config {
     web_url: String,
     secure_cookies: bool,
     openai_base_url: String,
+    posthog_webhook_secret: Option<String>,
 }
 
 impl Config {
@@ -48,6 +52,10 @@ impl Config {
             env::var("BELLA_WEB_URL").unwrap_or_else(|_| "http://127.0.0.1:5173".to_string());
         let openai_base_url =
             env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com".to_string());
+        let posthog_webhook_secret = env::var("POSTHOG_WEBHOOK_SECRET")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
 
         let public_api = reqwest::Url::parse(&public_api_url)
             .map_err(|error| anyhow::anyhow!("invalid BELLA_PUBLIC_API_URL: {error}"))?;
@@ -77,6 +85,7 @@ impl Config {
             web_url,
             secure_cookies,
             openai_base_url,
+            posthog_webhook_secret,
         })
     }
 }
@@ -153,6 +162,26 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/organizations/:organization_id/sdk/usage-events",
             post(sdk_ingestion::record_usage_event),
+        )
+        .route(
+            "/v1/organizations/:organization_id/webhooks/posthog",
+            post(posthog_ingestion::webhook),
+        )
+        .route(
+            "/v1/organizations/:organization_id/incidents",
+            get(incidents::list),
+        )
+        .route(
+            "/v1/organizations/:organization_id/incidents/:incident_id",
+            get(incidents::get),
+        )
+        .route(
+            "/v1/organizations/:organization_id/integrations",
+            get(integrations::list),
+        )
+        .route(
+            "/v1/organizations/:organization_id/integrations/posthog",
+            post(integrations::connect_posthog),
         )
         .route(
             "/v1/organizations/:organization_id/agent/messages",
