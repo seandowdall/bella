@@ -7,6 +7,7 @@ mod provider_accounts;
 mod provider_validation;
 mod reporting;
 mod sdk_ingestion;
+mod slack;
 
 use axum::{
     Json, Router,
@@ -26,6 +27,7 @@ struct AppState {
     config: Config,
     credential_cipher: credentials::CredentialCipher,
     provider_client: reqwest::Client,
+    slack_client: Option<slack::SlackClient>,
 }
 
 #[derive(Clone)]
@@ -36,6 +38,7 @@ struct Config {
     web_url: String,
     secure_cookies: bool,
     openai_base_url: String,
+    slack: Option<slack::SlackConfig>,
 }
 
 impl Config {
@@ -70,6 +73,8 @@ impl Config {
             anyhow::bail!("BELLA_SECURE_COOKIES must be true when BELLA_PUBLIC_API_URL uses HTTPS");
         }
 
+        let slack = slack::SlackConfig::from_env()?;
+
         Ok(Self {
             github_client_id,
             github_client_secret,
@@ -77,6 +82,7 @@ impl Config {
             web_url,
             secure_cookies,
             openai_base_url,
+            slack,
         })
     }
 }
@@ -116,6 +122,10 @@ async fn main() -> anyhow::Result<()> {
     let provider_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
+    let slack_client = config
+        .slack
+        .as_ref()
+        .map(|slack_config| slack::SlackClient::new(provider_client.clone(), slack_config.clone()));
 
     let db = bella_db::connect(&database_url).await?;
     bella_db::run_migrations(&db).await?;
@@ -171,11 +181,16 @@ async fn main() -> anyhow::Result<()> {
             "/v1/organizations/:organization_id/agent/settings/:setting_id/default",
             post(agent_settings::set_default),
         )
+        .route(
+            "/v1/organizations/:organization_id/integrations/slack/test-message",
+            post(slack::send_test_message),
+        )
         .with_state(AppState {
             db,
             config,
             credential_cipher,
             provider_client,
+            slack_client,
         });
 
     let listener = TcpListener::bind(bind_addr).await?;
