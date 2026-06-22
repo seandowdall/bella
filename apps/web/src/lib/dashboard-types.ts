@@ -111,6 +111,12 @@ export type AgentLlmSettingsList = {
   mode: 'deterministic' | 'llm_assisted'
 }
 
+export type SlackTestMessage = {
+  channel_id: string
+  message_ts: string
+}
+
+
 export type IncidentStatus =
   | 'triaging'
   | 'investigating'
@@ -190,4 +196,5 @@ export type Integration = {
 export type PosthogConnection = {
   integration: Integration
   webhook_secret: string
+
 }
