@@ -38,16 +38,24 @@ export default function HomePage() {
   const { selectedOrganization } = useAuth()
   const [models, setModels] = useState<AgentLlmSettings[]>([])
   const [modelId, setModelId] = useState<string>()
+  const [modelError, setModelError] = useState("")
 
   useEffect(() => {
     if (!selectedOrganization) return
     let cancelled = false
 
     const loadModels = async () => {
-      const settings = await getAgentLlmSettings(selectedOrganization.id)
-      if (cancelled) return
-      setModels(settings.items)
-      setModelId((current) => current ?? settings.default_id ?? undefined)
+      try {
+        const settings = await getAgentLlmSettings(selectedOrganization.id)
+        if (cancelled) return
+        setModels(settings.items)
+        setModelId((current) => current ?? settings.default_id ?? undefined)
+      } catch (error) {
+        if (cancelled) return
+        setModelError(
+          error instanceof Error ? error.message : "Could not load AI settings.",
+        )
+      }
     }
 
     void loadModels()
@@ -81,7 +89,7 @@ export default function HomePage() {
                 onValueChange={setModelId}
               />
             ),
-            Welcome: BellaWelcome,
+            Welcome: () => <BellaWelcome error={modelError} />,
           }}
         />
       </div>
@@ -178,7 +186,7 @@ function BellaModelSelector({
   )
 }
 
-function BellaWelcome() {
+function BellaWelcome({ error }: { error?: string }) {
   return (
     <div className="mb-6 flex flex-col items-center px-4 text-center">
       <p className="mb-2 text-sm font-medium tracking-[0.18em] text-muted-foreground uppercase">
@@ -187,6 +195,7 @@ function BellaWelcome() {
       <h1 className="text-2xl font-semibold tracking-tight">
         Ask about AI spend, models, providers, and sync health.
       </h1>
+      {error && <p className="mt-3 text-sm text-muted-foreground">{error}</p>}
     </div>
   )
 }

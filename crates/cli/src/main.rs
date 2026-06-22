@@ -55,6 +55,11 @@ enum Command {
         #[command(subcommand)]
         command: ProviderCommand,
     },
+    /// Manage operational integrations.
+    Integrations {
+        #[command(subcommand)]
+        command: IntegrationCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -113,6 +118,37 @@ enum ProviderCommand {
         organization: String,
         #[arg(long)]
         account: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum IntegrationCommand {
+    /// List connected integrations for an organization.
+    List {
+        #[arg(long)]
+        organization: Option<String>,
+    },
+    /// Connect or rotate a PostHog webhook secret.
+    Posthog {
+        #[command(subcommand)]
+        command: PosthogCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PosthogCommand {
+    /// Generate or rotate the PostHog webhook secret.
+    Connect {
+        #[arg(long)]
+        organization: Option<String>,
+        #[arg(long, default_value = "PostHog")]
+        name: String,
+        #[arg(
+            long,
+            env = "BELLA_PUBLIC_API_URL",
+            help = "Public Bella API origin used to print the PostHog webhook URL"
+        )]
+        public_api_url: Option<String>,
     },
 }
 
@@ -184,6 +220,31 @@ struct SyncOutcome {
     cost_snapshots: usize,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Integration {
+    id: String,
+    integration_type: String,
+    display_name: String,
+    status: String,
+    credential_fingerprint: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PosthogConnection {
+    integration: Integration,
+    webhook_secret: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PosthogConnectionOutput {
+    integration: Integration,
+    webhook_url: String,
+    webhook_secret: String,
+    auth_header: String,
+}
+
 #[derive(Serialize)]
 struct ConfigOutput<'a> {
     api_base_url: &'a str,
@@ -221,6 +282,11 @@ struct ConnectProviderRequest<'a> {
     provider: &'a str,
     display_name: &'a str,
     credentials: BTreeMap<&'static str, &'a str>,
+}
+
+#[derive(Serialize)]
+struct ConnectPosthogRequest<'a> {
+    display_name: &'a str,
 }
 
 #[derive(Deserialize)]
@@ -427,6 +493,70 @@ async fn main() -> anyhow::Result<()> {
                         outcome.provider_account_id,
                         outcome.usage_buckets,
                         outcome.cost_snapshots
+                    )
+                })?;
+            }
+        },
+        Command::Integrations { command } => match command {
+            IntegrationCommand::List { organization } => {
+                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let organization =
+                    resolve_organization_id(&cli.api_base_url, &credentials.token, organization)
+                        .await?;
+                let integrations =
+                    list_integrations(&cli.api_base_url, &credentials.token, &organization).await?;
+                print_value(&integrations, cli.json, || {
+                    integrations
+                        .iter()
+                        .map(|integration| {
+                            format!(
+                                "{}\t{}\t{}\t{}\t{}",
+                                integration.id,
+                                integration.integration_type,
+                                integration.display_name,
+                                integration.status,
+                                integration
+                                    .credential_fingerprint
+                                    .as_deref()
+                                    .unwrap_or("no_secret")
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })?;
+            }
+            IntegrationCommand::Posthog {
+                command:
+                    PosthogCommand::Connect {
+                        organization,
+                        name,
+                        public_api_url,
+                    },
+            } => {
+                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let organization =
+                    resolve_organization_id(&cli.api_base_url, &credentials.token, organization)
+                        .await?;
+                let connection =
+                    connect_posthog(&cli.api_base_url, &credentials.token, &organization, &name)
+                        .await?;
+                let webhook_url = format_posthog_webhook_url(
+                    public_api_url.as_deref().unwrap_or(&cli.api_base_url),
+                    &organization,
+                );
+                let output = PosthogConnectionOutput {
+                    auth_header: format!("Authorization: Bearer {}", connection.webhook_secret),
+                    integration: connection.integration,
+                    webhook_secret: connection.webhook_secret,
+                    webhook_url,
+                };
+                print_value(&output, cli.json, || {
+                    format!(
+                        "Connected PostHog integration {}.\nWebhook URL: {}\nAuth header: {}\nSecret: {}\nStore the secret now; Bella only shows it once.",
+                        output.integration.id,
+                        output.webhook_url,
+                        output.auth_header,
+                        output.webhook_secret
                     )
                 })?;
             }
@@ -739,6 +869,57 @@ async fn sync_provider(
         .json()
         .await
         .context("Bella API returned an invalid provider sync response")
+}
+
+async fn list_integrations(
+    api_base_url: &str,
+    token: &str,
+    organization_id: &str,
+) -> anyhow::Result<Vec<Integration>> {
+    Client::new()
+        .get(format!(
+            "{}/v1/organizations/{organization_id}/integrations",
+            api_base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("failed to contact Bella API")?
+        .error_for_status()
+        .context("Bella API rejected the integration list request")?
+        .json()
+        .await
+        .context("Bella API returned an invalid integration list")
+}
+
+async fn connect_posthog(
+    api_base_url: &str,
+    token: &str,
+    organization_id: &str,
+    display_name: &str,
+) -> anyhow::Result<PosthogConnection> {
+    Client::new()
+        .post(format!(
+            "{}/v1/organizations/{organization_id}/integrations/posthog",
+            api_base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .json(&ConnectPosthogRequest { display_name })
+        .send()
+        .await
+        .context("failed to contact Bella API")?
+        .error_for_status()
+        .context("Bella API rejected the PostHog integration request")?
+        .json()
+        .await
+        .context("Bella API returned an invalid PostHog integration response")
+}
+
+fn format_posthog_webhook_url(public_api_url: &str, organization_id: &str) -> String {
+    format!(
+        "{}/v1/organizations/{organization_id}/webhooks/posthog",
+        public_api_url.trim_end_matches('/')
+    )
 }
 
 fn read_provider_secret(secret: Option<String>, secret_stdin: bool) -> anyhow::Result<String> {

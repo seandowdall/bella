@@ -1,9 +1,11 @@
 import type * as React from 'react'
 import {
   ArrowLeftIcon,
+  AlertTriangleIcon,
   BotIcon,
   BoxesIcon,
   Building2Icon,
+  CableIcon,
   LayoutDashboardIcon,
   PlugIcon,
   SettingsIcon,
@@ -30,6 +32,8 @@ import type { Organization, User } from '@/lib/dashboard-types'
 
 const navigation = [
   { title: 'Home', icon: BotIcon, href: '/' },
+  { title: 'Incidents', icon: AlertTriangleIcon, href: '/incidents' },
+  { title: 'Integrations', icon: CableIcon, href: '/integrations' },
   { title: 'Data', icon: LayoutDashboardIcon, href: '/data' },
   { title: 'Providers', icon: BoxesIcon, href: '/providers' },
 ]
@@ -84,7 +88,7 @@ export function AppSidebar({
               Bella
             </p>
             <p className="text-sidebar-foreground mt-1 text-sm font-semibold">
-              AI cost visibility
+              AI SRE platform
             </p>
           </div>
           <OrganizationSwitcher

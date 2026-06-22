@@ -3,6 +3,10 @@ import type {
   AgentLlmSettings,
   AgentLlmSettingsList,
   AgentMessageResponse,
+  IncidentDetail,
+  IncidentListItem,
+  Integration,
+  PosthogConnection,
   ProviderAccount,
   ProviderDefinition,
   SyncOutcome,
@@ -12,9 +16,36 @@ import type {
 } from "@/lib/dashboard-types"
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_BELLA_API_BASE_URL ?? "/api"
+const apiTimeoutMs = 3_000
+
+async function apiFetch(
+  input: string,
+  init: RequestInit & { timeoutMs?: number } = {},
+) {
+  const { signal, timeoutMs = apiTimeoutMs, ...requestInit } = init
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
+
+  const abort = () => controller.abort()
+  signal?.addEventListener("abort", abort, { once: true })
+  try {
+    return await fetch(input, {
+      ...requestInit,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Bella API did not respond. Is `just dev` or `just api` running?")
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
+    signal?.removeEventListener("abort", abort)
+  }
+}
 
 export async function getMe(): Promise<User | null> {
-  const response = await fetch(`${apiBaseUrl}/v1/me`, {
+  const response = await apiFetch(`${apiBaseUrl}/v1/me`, {
     credentials: "include",
   })
   if (!response.ok) return null
@@ -22,7 +53,7 @@ export async function getMe(): Promise<User | null> {
 }
 
 export async function getOrganizations(): Promise<Organization[]> {
-  const response = await fetch(`${apiBaseUrl}/v1/organizations`, {
+  const response = await apiFetch(`${apiBaseUrl}/v1/organizations`, {
     credentials: "include",
   })
   if (!response.ok) throw new Error("Could not load your organizations.")
@@ -32,7 +63,7 @@ export async function getOrganizations(): Promise<Organization[]> {
 export async function createOrganization(
   name: string,
 ): Promise<Organization> {
-  const response = await fetch(`${apiBaseUrl}/v1/organizations`, {
+  const response = await apiFetch(`${apiBaseUrl}/v1/organizations`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -47,14 +78,14 @@ export async function createOrganization(
 }
 
 export async function logout(): Promise<void> {
-  await fetch(`${apiBaseUrl}/v1/auth/logout`, {
+  await apiFetch(`${apiBaseUrl}/v1/auth/logout`, {
     method: "POST",
     credentials: "include",
   })
 }
 
 export async function getProviderCatalog(): Promise<ProviderDefinition[]> {
-  const response = await fetch(`${apiBaseUrl}/v1/providers`, {
+  const response = await apiFetch(`${apiBaseUrl}/v1/providers`, {
     credentials: "include",
   })
   if (!response.ok) throw new Error("Could not load the provider catalog.")
@@ -64,7 +95,7 @@ export async function getProviderCatalog(): Promise<ProviderDefinition[]> {
 export async function getProviderAccounts(
   organizationId: string,
 ): Promise<ProviderAccount[]> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/provider-accounts`,
     { credentials: "include" },
   )
@@ -85,7 +116,7 @@ export async function connectProviderAccount({
   displayName: string
   secret: string
 }): Promise<ProviderAccount> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/provider-accounts`,
     {
       method: "POST",
@@ -122,7 +153,7 @@ export async function deleteProviderAccount(
   organizationId: string,
   accountId: string,
 ): Promise<void> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/provider-accounts/${accountId}`,
     {
       method: "DELETE",
@@ -141,7 +172,7 @@ export async function updateProviderAccount(
   accountId: string,
   displayName: string,
 ): Promise<ProviderAccount> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/provider-accounts/${accountId}`,
     {
       method: "PATCH",
@@ -161,7 +192,7 @@ export async function syncProviderAccount(
   organizationId: string,
   accountId: string,
 ): Promise<SyncOutcome> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/provider-accounts/${accountId}/sync`,
     {
       method: "POST",
@@ -185,7 +216,7 @@ export async function getUsageSummary({
   end: string
 }): Promise<UsageSummary> {
   const params = new URLSearchParams({ start, end })
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/usage/summary?${params}`,
     { credentials: "include" },
   )
@@ -193,6 +224,71 @@ export async function getUsageSummary({
     throw new Error(await errorMessage(response, "Could not load usage summary."))
   }
   return response.json() as Promise<UsageSummary>
+}
+
+export async function getIncidents(
+  organizationId: string,
+): Promise<IncidentListItem[]> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/incidents`,
+    { credentials: "include" },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not load incidents."))
+  }
+  return response.json() as Promise<IncidentListItem[]>
+}
+
+export async function getIncident({
+  organizationId,
+  incidentId,
+}: {
+  organizationId: string
+  incidentId: string
+}): Promise<IncidentDetail> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/incidents/${incidentId}`,
+    { credentials: "include" },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not load incident."))
+  }
+  return response.json() as Promise<IncidentDetail>
+}
+
+export async function getIntegrations(
+  organizationId: string,
+): Promise<Integration[]> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/integrations`,
+    { credentials: "include" },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not load integrations."))
+  }
+  return response.json() as Promise<Integration[]>
+}
+
+export async function connectPosthogIntegration({
+  organizationId,
+  displayName,
+}: {
+  organizationId: string
+  displayName?: string
+}): Promise<PosthogConnection> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/posthog`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ display_name: displayName ?? "PostHog" }),
+    },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not connect PostHog."))
+  }
+  return response.json() as Promise<PosthogConnection>
 }
 
 export async function sendAgentMessage({
@@ -206,7 +302,7 @@ export async function sendAgentMessage({
   llmSettingId?: string
   signal?: AbortSignal
 }): Promise<AgentMessageResponse> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/agent/messages`,
     {
       method: "POST",
@@ -230,7 +326,7 @@ export async function sendAgentMessage({
 export async function getAgentLlmSettings(
   organizationId: string,
 ): Promise<AgentLlmSettingsList> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/agent/settings`,
     { credentials: "include" },
   )
@@ -273,7 +369,7 @@ export async function saveAgentLlmSettings({
   apiKey: string
   isDefault: boolean
 }): Promise<AgentLlmSettings> {
-  const response = await fetch(
+  const response = await apiFetch(
     settingId
       ? `${apiBaseUrl}/v1/organizations/${organizationId}/agent/settings/${settingId}`
       : `${apiBaseUrl}/v1/organizations/${organizationId}/agent/settings`,
@@ -300,7 +396,7 @@ export async function deleteAgentLlmSettings(
   organizationId: string,
   settingId: string,
 ): Promise<void> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/agent/settings/${settingId}`,
     {
       method: "DELETE",
@@ -316,7 +412,7 @@ export async function setDefaultAgentLlmSettings(
   organizationId: string,
   settingId: string,
 ): Promise<AgentLlmSettings> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/agent/settings/${settingId}/default`,
     {
       method: "POST",

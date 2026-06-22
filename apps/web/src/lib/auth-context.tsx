@@ -1,6 +1,8 @@
 "use client"
 
 import { Spinner } from "@/components/ui/spinner"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
 import { createContext, useContext, useEffect, useState } from "react"
 import type { ReactNode } from "react"
 import { useRouter } from "next/navigation"
@@ -83,9 +85,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!loading && !user) {
+      if (error) return
       router.replace("/login")
     }
-  }, [loading, router, user])
+  }, [error, loading, router, user])
 
   if (!user) {
     if (loading) {
@@ -94,6 +97,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           <div className="text-muted-foreground flex items-center gap-2 text-sm">
             <Spinner />
             Loading Bella
+          </div>
+        </main>
+      )
+    }
+    if (error) {
+      return (
+        <main className="grid min-h-svh place-items-center p-6">
+          <div className="flex w-full max-w-md flex-col gap-4">
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+            <Button onClick={() => window.location.reload()}>Retry</Button>
           </div>
         </main>
       )
