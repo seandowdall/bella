@@ -110,3 +110,84 @@ export type AgentLlmSettingsList = {
   default_id: string | null
   mode: 'deterministic' | 'llm_assisted'
 }
+
+export type IncidentStatus =
+  | 'triaging'
+  | 'investigating'
+  | 'identified'
+  | 'monitoring'
+  | 'resolved'
+  | 'false_positive'
+
+export type IncidentSeverity =
+  | 'unknown'
+  | 'info'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'critical'
+
+export type IncidentListItem = {
+  id: string
+  title: string
+  status: IncidentStatus
+  severity: IncidentSeverity
+  source: string
+  fingerprint: string
+  signal_count: number
+  detected_at: string
+  updated_at: string
+  resolved_at: string | null
+}
+
+export type SignalDetail = {
+  id: string
+  source: string
+  signal_type: string
+  source_event_id: string | null
+  title: string
+  severity: IncidentSeverity
+  payload: unknown
+  received_at: string
+}
+
+export type IncidentEventDetail = {
+  id: string
+  event_type: string
+  title: string
+  body: string | null
+  metadata: unknown
+  created_at: string
+}
+
+export type IncidentDetail = {
+  id: string
+  organization_id: string
+  title: string
+  status: IncidentStatus
+  severity: IncidentSeverity
+  source: string
+  fingerprint: string
+  summary: string | null
+  impact: string | null
+  detected_at: string
+  resolved_at: string | null
+  metadata: unknown
+  signals: SignalDetail[]
+  events: IncidentEventDetail[]
+}
+
+export type Integration = {
+  id: string
+  integration_type: string
+  display_name: string
+  status: 'connected' | 'needs_attention' | 'disabled'
+  credential_fingerprint: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type PosthogConnection = {
+  integration: Integration
+  webhook_secret: string
+}
