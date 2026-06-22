@@ -6,6 +6,7 @@ import type {
   ProviderAccount,
   ProviderDefinition,
   SyncOutcome,
+  SlackTestMessage,
   UsageSummary,
   User,
 } from "@/lib/dashboard-types"
@@ -326,6 +327,24 @@ export async function setDefaultAgentLlmSettings(
     throw new Error(await errorMessage(response, "Could not set the default AI model."))
   }
   return response.json() as Promise<AgentLlmSettings>
+}
+
+export async function sendSlackTestMessage(
+  organizationId: string,
+): Promise<SlackTestMessage> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/slack/test-message`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  )
+  if (!response.ok) {
+    throw new Error(
+      await errorMessage(response, "Could not send the Slack test message."),
+    )
+  }
+  return response.json() as Promise<SlackTestMessage>
 }
 
 export function getLoginUrl(): string {

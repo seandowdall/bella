@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react"
 import {
   Building2Icon,
+  MessageSquareIcon,
   MoreHorizontalIcon,
   PlusIcon,
   UserIcon,
@@ -63,6 +64,7 @@ import {
   getAgentLlmSettings,
   saveAgentLlmSettings,
   setDefaultAgentLlmSettings,
+  sendSlackTestMessage,
 } from "@/lib/api"
 import type { AgentLlmSettings, Organization, User } from "@/lib/dashboard-types"
 
@@ -186,6 +188,88 @@ export function OrganizationSettings({
             </FieldDescription>
           </Field>
         </FieldGroup>
+      </CardContent>
+    </Card>
+  )
+}
+
+export function SlackSettings({
+  organizationId,
+  canManage,
+}: {
+  organizationId?: string
+  canManage: boolean
+}) {
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState("")
+  const [message, setMessage] = useState("")
+
+  const handleSendTestMessage = async () => {
+    if (!organizationId) return
+    setSending(true)
+    setError("")
+    setMessage("")
+    try {
+      const result = await sendSlackTestMessage(organizationId)
+      setMessage(`Test message sent to Slack channel ${result.channel_id}.`)
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Could not send the Slack test message.",
+      )
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-1.5">
+            <CardTitle className="flex items-center gap-2">
+              <MessageSquareIcon />
+              Slack
+            </CardTitle>
+            <CardDescription>
+              Verify that Bella can post incident handoffs to the configured
+              Slack channel.
+            </CardDescription>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            disabled={!canManage || !organizationId || sending}
+            onClick={() => void handleSendTestMessage()}
+          >
+            {sending && <Spinner data-icon="inline-start" />}
+            {sending ? "Sending" : "Send test message"}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <p className="text-muted-foreground text-sm">
+          Bella reads the bot token and destination channel from the local
+          server configuration. This test does not expose or store Slack
+          credentials in the dashboard.
+        </p>
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        {message && (
+          <Alert>
+            <AlertDescription>{message}</AlertDescription>
+          </Alert>
+        )}
+        {!canManage && (
+          <Alert>
+            <AlertDescription>
+              Organization owner or admin access is required to send a Slack
+              test message.
+            </AlertDescription>
+          </Alert>
+        )}
       </CardContent>
     </Card>
   )

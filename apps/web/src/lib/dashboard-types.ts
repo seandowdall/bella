@@ -110,3 +110,8 @@ export type AgentLlmSettingsList = {
   default_id: string | null
   mode: 'deterministic' | 'llm_assisted'
 }
+
+export type SlackTestMessage = {
+  channel_id: string
+  message_ts: string
+}
