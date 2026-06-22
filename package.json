@@ -2,7 +2,7 @@
   "name": "bella",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "build:sdks": "bun run --filter '@bella/*' build",
     "typecheck:sdks": "bun run --filter '@bella/*' typecheck"
