@@ -48,6 +48,7 @@ GITHUB_OAUTH_CLIENT_SECRET=your_client_secret
 BELLA_PUBLIC_API_URL=https://bella.example.com/api
 BELLA_WEB_URL=https://bella.example.com
 BELLA_SECURE_COOKIES=true
+BELLA_ALLOWED_GITHUB_EMAILS=seandowdall22@gmail.com,tadhg.jamesdowdall@gmail.com
 BELLA_API_BIND_ADDR=0.0.0.0:3000
 DATABASE_URL=postgres://...
 ```
@@ -60,6 +61,8 @@ Requirements:
 - Keep `BELLA_PUBLIC_API_URL` externally reachable. Do not use the container's
   internal hostname.
 - Set `BELLA_WEB_URL` to the exact dashboard origin without a trailing path.
+- Set `BELLA_ALLOWED_GITHUB_EMAILS` to a comma-separated list when you want to
+  restrict login to specific GitHub accounts by primary verified email.
 
 ## Configure the Dashboard
 

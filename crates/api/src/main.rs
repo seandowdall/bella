@@ -10,7 +10,6 @@ mod provider_accounts;
 mod provider_validation;
 mod reporting;
 mod sdk_ingestion;
-mod slack;
 
 use axum::{
     Json, Router,
@@ -30,18 +29,17 @@ struct AppState {
     config: Config,
     credential_cipher: credentials::CredentialCipher,
     provider_client: reqwest::Client,
-    slack_client: Option<slack::SlackClient>,
 }
 
 #[derive(Clone)]
 struct Config {
     github_client_id: String,
     github_client_secret: String,
+    github_allowed_emails: Vec<String>,
     public_api_url: String,
     web_url: String,
     secure_cookies: bool,
     openai_base_url: String,
-    slack: Option<slack::SlackConfig>,
     posthog_webhook_secret: Option<String>,
 }
 
@@ -49,6 +47,7 @@ impl Config {
     fn from_env() -> anyhow::Result<Self> {
         let github_client_id = required_env("GITHUB_OAUTH_CLIENT_ID")?;
         let github_client_secret = required_env("GITHUB_OAUTH_CLIENT_SECRET")?;
+        let github_allowed_emails = parse_csv_env("BELLA_ALLOWED_GITHUB_EMAILS")?;
         let public_api_url = env::var("BELLA_PUBLIC_API_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
         let web_url =
@@ -81,18 +80,29 @@ impl Config {
             anyhow::bail!("BELLA_SECURE_COOKIES must be true when BELLA_PUBLIC_API_URL uses HTTPS");
         }
 
-        let slack = slack::SlackConfig::from_env()?;
-
         Ok(Self {
             github_client_id,
             github_client_secret,
+            github_allowed_emails,
             public_api_url,
             web_url,
             secure_cookies,
             openai_base_url,
-            slack,
             posthog_webhook_secret,
         })
+    }
+}
+
+fn parse_csv_env(name: &str) -> anyhow::Result<Vec<String>> {
+    match env::var(name) {
+        Ok(value) => Ok(value
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_ascii_lowercase)
+            .collect()),
+        Err(env::VarError::NotPresent) => Ok(Vec::new()),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -121,9 +131,14 @@ async fn main() -> anyhow::Result<()> {
 
     let database_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://bella:bella@127.0.0.1:5432/bella".to_string());
-    let bind_addr: SocketAddr = env::var("BELLA_API_BIND_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:3000".to_string())
-        .parse()?;
+    let bind_addr: SocketAddr = match env::var("BELLA_API_BIND_ADDR") {
+        Ok(value) => value.parse()?,
+        Err(env::VarError::NotPresent) => {
+            let port = env::var("PORT").unwrap_or_else(|_| "3000".to_string());
+            format!("0.0.0.0:{port}").parse()?
+        }
+        Err(error) => return Err(error.into()),
+    };
     let config = Config::from_env()?;
     let credential_cipher = credentials::CredentialCipher::from_base64(&required_env(
         "BELLA_CREDENTIAL_ENCRYPTION_KEY",
@@ -131,10 +146,6 @@ async fn main() -> anyhow::Result<()> {
     let provider_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
-    let slack_client = config
-        .slack
-        .as_ref()
-        .map(|slack_config| slack::SlackClient::new(provider_client.clone(), slack_config.clone()));
 
     let db = bella_db::connect(&database_url).await?;
     bella_db::run_migrations(&db).await?;
@@ -210,16 +221,11 @@ async fn main() -> anyhow::Result<()> {
             "/v1/organizations/:organization_id/agent/settings/:setting_id/default",
             post(agent_settings::set_default),
         )
-        .route(
-            "/v1/organizations/:organization_id/integrations/slack/test-message",
-            post(slack::send_test_message),
-        )
         .with_state(AppState {
             db,
             config,
             credential_cipher,
             provider_client,
-            slack_client,
         });
 
     let listener = TcpListener::bind(bind_addr).await?;

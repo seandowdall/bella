@@ -69,12 +69,24 @@ struct GithubTokenResponse {
     access_token: String,
 }
 
+struct GithubIdentity {
+    user: GithubUser,
+    primary_email: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct GithubUser {
     id: i64,
     login: String,
     name: Option<String>,
     avatar_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GithubEmail {
+    email: String,
+    primary: bool,
+    verified: bool,
 }
 
 struct OAuthFlow {
@@ -130,8 +142,9 @@ pub async fn callback(
             return Err(AuthError::InvalidFlow);
         }
     }
-    let github_user = fetch_github_user(&state, &query.code).await?;
-    let user = upsert_user(&state, github_user).await?;
+    let github_identity = fetch_github_identity(&state, &query.code).await?;
+    authorize_github_email(&state, github_identity.primary_email.as_deref())?;
+    let user = upsert_user(&state, github_identity.user).await?;
     crate::organizations::ensure_default_organization(&state, &user).await?;
 
     match flow.flow_kind.as_str() {
@@ -347,7 +360,7 @@ async fn create_oauth_flow(
     url.query_pairs_mut()
         .append_pair("client_id", &state.config.github_client_id)
         .append_pair("redirect_uri", &callback_url)
-        .append_pair("scope", "read:user")
+        .append_pair("scope", "read:user user:email")
         .append_pair("state", &oauth_state);
     Ok(url.to_string())
 }
@@ -371,7 +384,7 @@ async fn consume_oauth_flow(state: &AppState, oauth_state: &str) -> Result<OAuth
     })
 }
 
-async fn fetch_github_user(state: &AppState, code: &str) -> Result<GithubUser, AuthError> {
+async fn fetch_github_identity(state: &AppState, code: &str) -> Result<GithubIdentity, AuthError> {
     let callback_url = format!(
         "{}/v1/auth/github/callback",
         state.config.public_api_url.trim_end_matches('/')
@@ -392,17 +405,55 @@ async fn fetch_github_user(state: &AppState, code: &str) -> Result<GithubUser, A
         .json::<GithubTokenResponse>()
         .await?;
 
-    client
+    let user = client
         .get("https://api.github.com/user")
         .header(header::ACCEPT, "application/vnd.github+json")
         .header(header::USER_AGENT, "bella")
-        .bearer_auth(token.access_token)
+        .bearer_auth(&token.access_token)
         .send()
         .await?
         .error_for_status()?
         .json()
         .await
-        .map_err(AuthError::from)
+        .map_err(AuthError::from)?;
+
+    let emails = client
+        .get("https://api.github.com/user/emails")
+        .header(header::ACCEPT, "application/vnd.github+json")
+        .header(header::USER_AGENT, "bella")
+        .bearer_auth(&token.access_token)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<Vec<GithubEmail>>()
+        .await?;
+    let primary_email = emails
+        .into_iter()
+        .find(|email| email.primary && email.verified)
+        .map(|email| email.email.to_ascii_lowercase());
+
+    Ok(GithubIdentity {
+        user,
+        primary_email,
+    })
+}
+
+fn authorize_github_email(state: &AppState, email: Option<&str>) -> Result<(), AuthError> {
+    if state.config.github_allowed_emails.is_empty() {
+        return Ok(());
+    }
+
+    let email = email.ok_or(AuthError::Forbidden)?;
+    if state
+        .config
+        .github_allowed_emails
+        .iter()
+        .any(|allowed| allowed == email)
+    {
+        Ok(())
+    } else {
+        Err(AuthError::Forbidden)
+    }
 }
 
 async fn upsert_user(state: &AppState, github: GithubUser) -> Result<AuthUser, AuthError> {
@@ -510,6 +561,7 @@ fn is_safe_return_to(value: &str, web_url: &str) -> bool {
 #[derive(Debug)]
 pub enum AuthError {
     Unauthorized,
+    Forbidden,
     InvalidFlow,
     BadRequest(&'static str),
     Configuration,
@@ -533,6 +585,7 @@ impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "authentication required"),
+            Self::Forbidden => (StatusCode::FORBIDDEN, "GitHub account is not allowed"),
             Self::InvalidFlow => (StatusCode::BAD_REQUEST, "invalid or expired login flow"),
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
             Self::Configuration => (
