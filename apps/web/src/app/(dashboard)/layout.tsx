@@ -25,6 +25,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { SiteHeader } from "@/components/site-header"
 import { ProviderDialogProvider } from "@/components/provider-dialog-context"
 import { AuthProvider, useAuth } from "@/lib/auth-context"
+import posthog from "posthog-js"
 
 function DashboardContent({ children }: { children: React.ReactNode }) {
   const {
@@ -47,7 +48,8 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     setCreating(true)
     setCreateError("")
     try {
-      await createOrganization(organizationName)
+      const org = await createOrganization(organizationName)
+      posthog.capture("organization_created", { organization_name: org.name, organization_id: org.id })
       setOrganizationName("")
       setCreateOpen(false)
     } catch (e) {

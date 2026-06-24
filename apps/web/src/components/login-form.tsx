@@ -11,6 +11,7 @@ import {
 import { Field, FieldDescription, FieldGroup } from "@/components/ui/field"
 import { getLoginUrl } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import posthog from "posthog-js"
 
 function GitHubIcon(props: React.ComponentProps<"svg">) {
   return (
@@ -28,6 +29,7 @@ export function LoginForm({
   ...props
 }: React.ComponentProps<"div">) {
   const login = () => {
+    posthog.capture("login_clicked")
     window.location.assign(getLoginUrl())
   }
 

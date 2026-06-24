@@ -29,6 +29,7 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
 import type { Organization, User } from '@/lib/dashboard-types'
+import { useAiCostVisibilityFlag } from '@/lib/feature-flags'
 
 const navigation = [
   { title: 'Home', icon: BotIcon, href: '/' },
@@ -65,6 +66,12 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const pathname = usePathname()
   const isSettings = pathname.startsWith('/settings')
+  const { enabled: costVisibilityEnabled } = useAiCostVisibilityFlag()
+  const visibleNavigation = costVisibilityEnabled
+    ? navigation
+    : navigation.filter(
+        (item) => item.href !== '/data' && item.href !== '/providers',
+      )
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
@@ -127,7 +134,7 @@ export function AppSidebar({
           </SidebarGroup>
         ) : (
           <>
-            <NavMain items={navigation} />
+            <NavMain items={visibleNavigation} />
             <SidebarGroup className="mt-auto">
               <SidebarGroupContent>
                 <SidebarMenu>
