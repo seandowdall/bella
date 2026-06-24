@@ -16,6 +16,7 @@ import { Thread } from "@/components/assistant-ui/thread"
 import { getAgentLlmSettings, sendAgentMessage } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
 import type { AgentLlmSettings } from "@/lib/dashboard-types"
+import { useAiCostVisibilityFlag } from "@/lib/feature-flags"
 
 const suggestions = [
   { prompt: "Summarize AI spend for the last 30 days" },
@@ -36,6 +37,7 @@ const slashCommands: Record<string, string> = {
 
 export default function HomePage() {
   const { selectedOrganization } = useAuth()
+  const { enabled: costVisibilityEnabled } = useAiCostVisibilityFlag()
   const [models, setModels] = useState<AgentLlmSettings[]>([])
   const [modelId, setModelId] = useState<string>()
   const [modelError, setModelError] = useState("")
@@ -78,7 +80,10 @@ export default function HomePage() {
   )
 
   return (
-    <BellaRuntimeProvider organizationId={selectedOrganization?.id}>
+    <BellaRuntimeProvider
+      organizationId={selectedOrganization?.id}
+      costVisibilityEnabled={costVisibilityEnabled}
+    >
       <div className="-m-4 flex min-h-[calc(100svh-var(--header-height))] flex-1 flex-col bg-black lg:-m-6">
         <Thread
           components={{
@@ -89,8 +94,14 @@ export default function HomePage() {
                 onValueChange={setModelId}
               />
             ),
-            Welcome: () => <BellaWelcome error={modelError} />,
+            Welcome: () => (
+              <BellaWelcome
+                costVisibilityEnabled={costVisibilityEnabled}
+                error={modelError}
+              />
+            ),
           }}
+          costVisibilityEnabled={costVisibilityEnabled}
         />
       </div>
     </BellaRuntimeProvider>
@@ -99,9 +110,11 @@ export default function HomePage() {
 
 function BellaRuntimeProvider({
   organizationId,
+  costVisibilityEnabled,
   children,
 }: {
   organizationId?: string
+  costVisibilityEnabled: boolean
   children: ReactNode
 }) {
   const adapter = useMemo<ChatModelAdapter>(
@@ -119,7 +132,10 @@ function BellaRuntimeProvider({
         }
 
         abortSignal.throwIfAborted()
-        const message = normalizePrompt(lastTextMessage(messages))
+        const message = normalizePrompt(
+          lastTextMessage(messages),
+          costVisibilityEnabled,
+        )
         const modelName = context.config?.modelName
         const llmSettingId = typeof modelName === "string" ? modelName : undefined
         const response = await sendAgentMessage({
@@ -143,13 +159,13 @@ function BellaRuntimeProvider({
         }
       },
     }),
-    [organizationId],
+    [costVisibilityEnabled, organizationId],
   )
 
   const runtime = useLocalRuntime(adapter, {
     adapters: {
       suggestion: {
-        generate: async () => suggestions,
+        generate: async () => (costVisibilityEnabled ? suggestions : []),
       },
     },
   })
@@ -186,14 +202,22 @@ function BellaModelSelector({
   )
 }
 
-function BellaWelcome({ error }: { error?: string }) {
+function BellaWelcome({
+  costVisibilityEnabled,
+  error,
+}: {
+  costVisibilityEnabled: boolean
+  error?: string
+}) {
   return (
     <div className="mb-6 flex flex-col items-center px-4 text-center">
       <p className="mb-2 text-sm font-medium tracking-[0.18em] text-muted-foreground uppercase">
         Bella
       </p>
       <h1 className="text-2xl font-semibold tracking-tight">
-        Ask about AI spend, models, providers, and sync health.
+        {costVisibilityEnabled
+          ? "Ask about AI spend, models, providers, and sync health."
+          : "Ask Bella to investigate incidents and operational health."}
       </h1>
       {error && <p className="mt-3 text-sm text-muted-foreground">{error}</p>}
     </div>
@@ -210,7 +234,9 @@ function lastTextMessage(messages: readonly ThreadMessage[]) {
     .join("\n")
 }
 
-function normalizePrompt(prompt: string) {
+function normalizePrompt(prompt: string, costVisibilityEnabled: boolean) {
   const trimmed = prompt.trim()
+  if (!costVisibilityEnabled) return trimmed
+
   return slashCommands[trimmed.toLowerCase()] ?? trimmed
 }

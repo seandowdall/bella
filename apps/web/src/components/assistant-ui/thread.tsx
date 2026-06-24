@@ -92,6 +92,7 @@ export type ThreadComponents = {
 
 export type ThreadProps = {
   components?: ThreadComponents | undefined;
+  costVisibilityEnabled?: boolean | undefined;
 };
 
 const EMPTY_COMPONENTS: ThreadComponents = {};
@@ -147,17 +148,26 @@ const isNewChatView = (s: AssistantState) =>
   s.thread.messages.length === 0 &&
   (!s.thread.isLoading || s.threads.isLoading);
 
-export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
+export const Thread: FC<ThreadProps> = ({
+  components = EMPTY_COMPONENTS,
+  costVisibilityEnabled = false,
+}) => {
   const isEmpty = useAuiState(isNewChatView);
 
   return (
     <ThreadComponentsContext.Provider value={components}>
-      <ThreadRoot isEmpty={isEmpty} />
+      <ThreadRoot
+        costVisibilityEnabled={costVisibilityEnabled}
+        isEmpty={isEmpty}
+      />
     </ThreadComponentsContext.Provider>
   );
 };
 
-const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
+const ThreadRoot: FC<{
+  costVisibilityEnabled: boolean;
+  isEmpty: boolean;
+}> = ({ costVisibilityEnabled, isEmpty }) => {
   const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
 
   return (
@@ -203,7 +213,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
             )}
           >
             <ThreadScrollToBottom />
-            <Composer />
+            <Composer costVisibilityEnabled={costVisibilityEnabled} />
             <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
               <ThreadSuggestions />
             </AuiIf>
@@ -275,7 +285,9 @@ const ThreadSuggestionItem: FC = () => {
   );
 };
 
-const Composer: FC = () => {
+const Composer: FC<{ costVisibilityEnabled: boolean }> = ({
+  costVisibilityEnabled,
+}) => {
   const aui = useAui();
   const slashCommands: readonly Unstable_SlashCommand[] = bellaCommandOptions.map(
     (command) => ({
@@ -292,7 +304,7 @@ const Composer: FC = () => {
     }),
   );
   const slash = unstable_useSlashCommandAdapter({
-    commands: slashCommands,
+    commands: costVisibilityEnabled ? slashCommands : [],
     removeOnExecute: true,
     iconMap: slashIconMap,
     fallbackIcon: SlashIcon,

@@ -84,6 +84,7 @@ import {
 } from "@/components/ui/table"
 import { ProviderIcon } from "@/components/provider-icon"
 import { useProviderDialog } from "@/components/provider-dialog-context"
+import posthog from "posthog-js"
 import {
   connectProviderAccount,
   deleteProviderAccount,
@@ -208,6 +209,13 @@ export function ProviderAccounts({
             displayName,
             secret,
           })
+      if (!editingAccount) {
+        posthog.capture("provider_connected", {
+          provider: selectedProvider.id,
+          provider_name: selectedProvider.name,
+          display_name: displayName,
+        })
+      }
       setAccounts((current) => [
         ...current.filter((item) => item.id !== account.id),
         account,

@@ -14,6 +14,7 @@ import {
   logout as apiLogout,
   getLoginUrl,
 } from "@/lib/api"
+import posthog from "posthog-js"
 
 type AuthContextValue = {
   user: User
@@ -51,6 +52,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(authenticatedUser)
         setOrganizations(orgs)
         setSelectedOrganizationId(orgs[0]?.id ?? "")
+        posthog.identify(authenticatedUser.github_login, {
+          name: authenticatedUser.name ?? authenticatedUser.github_login,
+          github_login: authenticatedUser.github_login,
+        })
       } catch (e) {
         setError(
           e instanceof Error ? e.message : "Could not load the dashboard.",
@@ -67,7 +72,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     organizations[0]
 
   const handleLogout = async () => {
+    posthog.capture("logout_clicked")
     await apiLogout()
+    posthog.reset()
     setUser(null)
     setOrganizations([])
   }

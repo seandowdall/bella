@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { ChartAreaInteractive } from "@/components/chart-area-interactive"
 import type { TimeRange } from "@/components/chart-area-interactive"
 import { SectionCards } from "@/components/section-cards"
@@ -22,9 +23,13 @@ import {
 import { getUsageSummary } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
 import type { UsageSummary } from "@/lib/dashboard-types"
+import { useAiCostVisibilityFlag } from "@/lib/feature-flags"
 import { daysForRange } from "@/components/chart-area-interactive"
 
 export default function DataPage() {
+  const router = useRouter()
+  const { enabled: costVisibilityEnabled, loaded: costVisibilityLoaded } =
+    useAiCostVisibilityFlag()
   const { selectedOrganization } = useAuth()
   const [timeRange, setTimeRange] = useState<TimeRange>("30d")
   const [summary, setSummary] = useState<UsageSummary>()
@@ -32,7 +37,7 @@ export default function DataPage() {
   const [error, setError] = useState("")
 
   useEffect(() => {
-    if (!selectedOrganization) return
+    if (!costVisibilityEnabled || !selectedOrganization) return
     const load = async () => {
       setLoading(true)
       setError("")
@@ -52,7 +57,15 @@ export default function DataPage() {
       }
     }
     void load()
-  }, [selectedOrganization, timeRange])
+  }, [costVisibilityEnabled, selectedOrganization, timeRange])
+
+  useEffect(() => {
+    if (costVisibilityLoaded && !costVisibilityEnabled) {
+      router.replace("/")
+    }
+  }, [costVisibilityEnabled, costVisibilityLoaded, router])
+
+  if (!costVisibilityEnabled) return null
 
   return (
     <>
