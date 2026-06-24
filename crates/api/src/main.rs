@@ -10,17 +10,20 @@ mod provider_accounts;
 mod provider_validation;
 mod reporting;
 mod sdk_ingestion;
+mod security;
 
 use axum::{
     Json, Router,
-    http::StatusCode,
+    http::{HeaderName, Method, StatusCode, header},
+    middleware,
     response::IntoResponse,
     routing::{get, patch, post},
 };
 use bella_db::DbPool;
 use serde::Serialize;
-use std::{env, net::SocketAddr};
+use std::{env, net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Clone)]
@@ -29,6 +32,7 @@ struct AppState {
     config: Config,
     credential_cipher: credentials::CredentialCipher,
     provider_client: reqwest::Client,
+    rate_limiter: Arc<security::RateLimiter>,
 }
 
 #[derive(Clone)]
@@ -41,6 +45,7 @@ struct Config {
     secure_cookies: bool,
     openai_base_url: String,
     posthog_webhook_secret: Option<String>,
+    allowed_origins: Vec<String>,
 }
 
 impl Config {
@@ -79,6 +84,7 @@ impl Config {
         if public_api.scheme() == "https" && !secure_cookies {
             anyhow::bail!("BELLA_SECURE_COOKIES must be true when BELLA_PUBLIC_API_URL uses HTTPS");
         }
+        let allowed_origins = parse_origin_allowlist(&web_url)?;
 
         Ok(Self {
             github_client_id,
@@ -89,8 +95,34 @@ impl Config {
             secure_cookies,
             openai_base_url,
             posthog_webhook_secret,
+            allowed_origins,
         })
     }
+}
+
+fn parse_origin_allowlist(web_url: &str) -> anyhow::Result<Vec<String>> {
+    let configured = env::var("BELLA_ALLOWED_ORIGINS").unwrap_or_else(|_| web_url.to_string());
+    let mut origins = Vec::new();
+    for value in configured
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let url = reqwest::Url::parse(value).map_err(|error| {
+            anyhow::anyhow!("invalid BELLA_ALLOWED_ORIGINS entry {value:?}: {error}")
+        })?;
+        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+            anyhow::bail!("BELLA_ALLOWED_ORIGINS entries must be http or https origins");
+        }
+        let origin = url.origin().ascii_serialization();
+        if !origins.contains(&origin) {
+            origins.push(origin);
+        }
+    }
+    if origins.is_empty() {
+        anyhow::bail!("BELLA_ALLOWED_ORIGINS must include at least one trusted web origin");
+    }
+    Ok(origins)
 }
 
 fn parse_csv_env(name: &str) -> anyhow::Result<Vec<String>> {
@@ -149,6 +181,36 @@ async fn main() -> anyhow::Result<()> {
 
     let db = bella_db::connect(&database_url).await?;
     bella_db::run_migrations(&db).await?;
+    let allowed_origins = Arc::new(config.allowed_origins.clone());
+    let app_state = AppState {
+        db,
+        config,
+        credential_cipher,
+        provider_client,
+        rate_limiter: Arc::new(security::RateLimiter::new()),
+    };
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(move |origin, _| {
+            origin
+                .to_str()
+                .is_ok_and(|value| allowed_origins.iter().any(|allowed| allowed == value))
+        }))
+        .allow_credentials(true)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("idempotency-key"),
+            HeaderName::from_static("x-bella-webhook-secret"),
+            HeaderName::from_static("x-posthog-webhook-secret"),
+        ]);
 
     let app = Router::new()
         .route("/health", get(health))
@@ -221,12 +283,12 @@ async fn main() -> anyhow::Result<()> {
             "/v1/organizations/:organization_id/agent/settings/:setting_id/default",
             post(agent_settings::set_default),
         )
-        .with_state(AppState {
-            db,
-            config,
-            credential_cipher,
-            provider_client,
-        });
+        .layer(cors)
+        .layer(middleware::from_fn_with_state(
+            app_state.clone(),
+            security::guard,
+        ))
+        .with_state(app_state);
 
     let listener = TcpListener::bind(bind_addr).await?;
     tracing::info!("bella-api listening on http://{bind_addr}");

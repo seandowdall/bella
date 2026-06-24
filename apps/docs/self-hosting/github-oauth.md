@@ -47,6 +47,7 @@ GITHUB_OAUTH_CLIENT_ID=your_client_id
 GITHUB_OAUTH_CLIENT_SECRET=your_client_secret
 BELLA_PUBLIC_API_URL=https://bella.example.com/api
 BELLA_WEB_URL=https://bella.example.com
+BELLA_ALLOWED_ORIGINS=https://bella.example.com
 BELLA_SECURE_COOKIES=true
 BELLA_ALLOWED_GITHUB_EMAILS=seandowdall22@gmail.com,tadhg.jamesdowdall@gmail.com
 BELLA_API_BIND_ADDR=0.0.0.0:3000
@@ -61,6 +62,9 @@ Requirements:
 - Keep `BELLA_PUBLIC_API_URL` externally reachable. Do not use the container's
   internal hostname.
 - Set `BELLA_WEB_URL` to the exact dashboard origin without a trailing path.
+- Set `BELLA_ALLOWED_ORIGINS` to the exact browser origins allowed to call the
+  API with credentials. Use a comma-separated list only when one API serves
+  multiple trusted dashboard origins.
 - Set `BELLA_ALLOWED_GITHUB_EMAILS` to a comma-separated list when you want to
   restrict login to specific GitHub accounts by primary verified email.
 
@@ -69,7 +73,7 @@ Requirements:
 Build the dashboard with:
 
 ```env
-VITE_BELLA_API_BASE_URL=/api
+NEXT_PUBLIC_BELLA_API_BASE_URL=/api
 ```
 
 This value is public and is embedded in the browser bundle. It is an API path,
@@ -124,3 +128,31 @@ After confirming new logins work, remove the old GitHub client secret.
 Use a separate GitHub OAuth app for each environment, such as production and
 staging. Each app can then have the exact callback URL for that environment,
 and rotating one environment's secret will not affect the others.
+
+Production and QA should also use separate values for:
+
+- Postgres databases and database users
+- `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`
+- `BELLA_PUBLIC_API_URL`, `BELLA_WEB_URL`, and `BELLA_ALLOWED_ORIGINS`
+- `BELLA_CREDENTIAL_ENCRYPTION_KEY`
+- Provider credentials and webhook secrets
+
+For example, if the production dashboard is `https://app.bella.md` and QA is
+`https://app.qa.bella.md`, configure each API with only its own trusted origin:
+
+```env
+# production API
+BELLA_PUBLIC_API_URL=https://api.bella.md
+BELLA_WEB_URL=https://app.bella.md
+BELLA_ALLOWED_ORIGINS=https://app.bella.md
+
+# QA API
+BELLA_PUBLIC_API_URL=https://api.qa.bella.md
+BELLA_WEB_URL=https://app.qa.bella.md
+BELLA_ALLOWED_ORIGINS=https://app.qa.bella.md
+```
+
+The API rejects cookie-authenticated state-changing browser requests unless the
+request comes from one of these trusted origins. Bearer-token requests from the
+CLI and SDK do not depend on browser cookies and are not subject to this browser
+origin check.
