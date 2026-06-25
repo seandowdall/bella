@@ -310,6 +310,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/v1/auth/github/start", get(auth::web_start))
         .route("/v1/auth/github/callback", get(auth::callback))
+        .route("/v1/slack/oauth/callback", get(slack::oauth_callback))
         .route("/v1/auth/logout", post(auth::logout))
         .route("/v1/auth/token/revoke", post(auth::revoke_token))
         .route("/v1/auth/cli/start", post(auth::cli_start))
