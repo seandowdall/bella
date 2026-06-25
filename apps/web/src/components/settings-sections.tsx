@@ -3,9 +3,11 @@
 import { FormEvent, useEffect, useState } from "react"
 import {
   Building2Icon,
+  MailPlusIcon,
   MessageSquareIcon,
   MoreHorizontalIcon,
   PlusIcon,
+  ShieldIcon,
   UserIcon,
 } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -62,11 +64,22 @@ import {
 import {
   deleteAgentLlmSettings,
   getAgentLlmSettings,
+  getOrganizationMembers,
+  inviteOrganizationMember,
+  removeOrganizationMember,
+  revokeOrganizationInvitation,
   saveAgentLlmSettings,
   setDefaultAgentLlmSettings,
   sendSlackTestMessage,
+  updateOrganizationMemberRole,
 } from "@/lib/api"
-import type { AgentLlmSettings, Organization, User } from "@/lib/dashboard-types"
+import type {
+  AgentLlmSettings,
+  Organization,
+  OrganizationInvitation,
+  OrganizationMember,
+  User,
+} from "@/lib/dashboard-types"
 
 const llmModels: Record<AgentLlmSettings["provider"], string[]> = {
   openai: [
@@ -98,6 +111,18 @@ const llmModels: Record<AgentLlmSettings["provider"], string[]> = {
     "claude-opus-4-1",
     "claude-opus-4-20250514",
   ],
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value))
+}
+
+function formatInviteStatus(status: OrganizationInvitation["status"]) {
+  return status.charAt(0).toUpperCase() + status.slice(1)
 }
 
 export function SettingsPageHeader({
@@ -150,46 +175,417 @@ export function ProfileSettings({ user }: { user: User }) {
 
 export function OrganizationSettings({
   organization,
+  user,
 }: {
   organization?: Organization
+  user: User
 }) {
+  const [members, setMembers] = useState<OrganizationMember[]>([])
+  const [invitations, setInvitations] = useState<OrganizationInvitation[]>([])
+  const [email, setEmail] = useState("")
+  const [role, setRole] = useState<"admin" | "member">("member")
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+  const [message, setMessage] = useState("")
+  const organizationId = organization?.id
+  const canManage = organization?.role === "owner" || organization?.role === "admin"
+  const canManageRoles = organization?.role === "owner"
+
+  const loadMembers = async () => {
+    if (!organization) return
+    setLoading(true)
+    setError("")
+    try {
+      const result = await getOrganizationMembers(organization.id)
+      setMembers(result.members)
+      setInvitations(result.invitations)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load organization members.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!organizationId) return
+    const load = async () => {
+      setLoading(true)
+      setError("")
+      try {
+        const result = await getOrganizationMembers(organizationId)
+        setMembers(result.members)
+        setInvitations(result.invitations)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not load organization members.")
+      } finally {
+        setLoading(false)
+      }
+    }
+    void load()
+  }, [organizationId])
+
+  const handleInvite = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!organization || !email.trim()) return
+    setSaving(true)
+    setError("")
+    setMessage("")
+    try {
+      await inviteOrganizationMember({
+        organizationId: organization.id,
+        email,
+        role,
+      })
+      setEmail("")
+      setRole("member")
+      await loadMembers()
+      setMessage("Invitation email sent.")
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not send the invitation.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRoleChange = async (
+    member: OrganizationMember,
+    nextRole: "admin" | "member",
+  ) => {
+    if (!organization || member.role === nextRole) return
+    setSaving(true)
+    setError("")
+    setMessage("")
+    try {
+      await updateOrganizationMemberRole({
+        organizationId: organization.id,
+        userId: member.user_id,
+        role: nextRole,
+      })
+      await loadMembers()
+      setMessage(`@${member.github_login} is now ${nextRole}.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update member role.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRemove = async (member: OrganizationMember) => {
+    if (!organization) return
+    setSaving(true)
+    setError("")
+    setMessage("")
+    try {
+      await removeOrganizationMember(organization.id, member.user_id)
+      await loadMembers()
+      setMessage(`@${member.github_login} removed.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not remove member.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRevoke = async (invitation: OrganizationInvitation) => {
+    if (!organization) return
+    setSaving(true)
+    setError("")
+    setMessage("")
+    try {
+      await revokeOrganizationInvitation(organization.id, invitation.id)
+      await loadMembers()
+      setMessage(`Invitation to ${invitation.email} revoked.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not revoke invitation.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Building2Icon />
-          Organization
-        </CardTitle>
-        <CardDescription>
-          Current workspace context for provider credentials, imports, and agent
-          answers.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="organization-name">Organization</FieldLabel>
-            <Input
-              id="organization-name"
-              value={organization?.name ?? "No organization selected"}
-              readOnly
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="workspace-name">Default workspace</FieldLabel>
-            <Input
-              id="workspace-name"
-              value={organization?.default_workspace.name ?? "None"}
-              readOnly
-            />
-            <FieldDescription>
-              Provider-reported data and future agent tools remain scoped to this
-              organization.
-            </FieldDescription>
-          </Field>
-        </FieldGroup>
-      </CardContent>
-    </Card>
+    <div className="flex flex-col gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Building2Icon />
+            Organization
+          </CardTitle>
+          <CardDescription>
+            Current workspace context for provider credentials, imports, and
+            agent answers.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="organization-name">Organization</FieldLabel>
+              <Input
+                id="organization-name"
+                value={organization?.name ?? "No organization selected"}
+                readOnly
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="workspace-name">Default workspace</FieldLabel>
+              <Input
+                id="workspace-name"
+                value={organization?.default_workspace.name ?? "None"}
+                readOnly
+              />
+              <FieldDescription>
+                Provider-reported data and future agent tools remain scoped to
+                this organization.
+              </FieldDescription>
+            </Field>
+          </FieldGroup>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-1.5">
+              <CardTitle className="flex items-center gap-2">
+                <ShieldIcon />
+                Members
+              </CardTitle>
+              <CardDescription>
+                Invite teammates and manage organization roles.
+              </CardDescription>
+            </div>
+            {loading && (
+              <div className="text-muted-foreground flex items-center gap-2 text-sm">
+                <Spinner />
+                Loading
+              </div>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          {message && (
+            <Alert>
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          )}
+          <form onSubmit={handleInvite} className="flex flex-col gap-4">
+            <FieldGroup className="md:grid md:grid-cols-[1fr_160px_auto] md:items-end">
+              <Field>
+                <FieldLabel htmlFor="invite-email">Invite by email</FieldLabel>
+                <Input
+                  id="invite-email"
+                  type="email"
+                  value={email}
+                  placeholder="teammate@example.com"
+                  disabled={!canManage || saving || !organization}
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="invite-role">Role</FieldLabel>
+                <Select
+                  value={role}
+                  onValueChange={(value) => setRole(value as "admin" | "member")}
+                  disabled={!canManage || saving || !organization}
+                >
+                  <SelectTrigger id="invite-role">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="member">Member</SelectItem>
+                      <SelectItem value="admin">Admin</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Button
+                type="submit"
+                disabled={!canManage || saving || !organization || !email.trim()}
+              >
+                {saving ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <MailPlusIcon data-icon="inline-start" />
+                )}
+                Invite
+              </Button>
+            </FieldGroup>
+          </form>
+
+          <div className="overflow-hidden rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Joined</TableHead>
+                  <TableHead className="w-12">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {members.length ? (
+                  members.map((member) => (
+                    <TableRow key={member.user_id}>
+                      <TableCell className="font-medium">
+                        {member.name ?? `@${member.github_login}`}
+                      </TableCell>
+                      <TableCell>
+                        {member.primary_email ?? (
+                          <span className="text-muted-foreground">Not shared</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {member.role === "owner" ? (
+                          <Badge variant="secondary">Owner</Badge>
+                        ) : canManageRoles ? (
+                          <Select
+                            value={member.role}
+                            onValueChange={(value) =>
+                              void handleRoleChange(
+                                member,
+                                value as "admin" | "member",
+                              )
+                            }
+                            disabled={saving}
+                          >
+                            <SelectTrigger className="h-8 w-32">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectGroup>
+                                <SelectItem value="member">Member</SelectItem>
+                                <SelectItem value="admin">Admin</SelectItem>
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Badge variant="outline">
+                            {member.role === "admin" ? "Admin" : "Member"}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>{formatDate(member.created_at)}</TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              disabled={
+                                saving ||
+                                member.user_id === user.id ||
+                                member.role === "owner" ||
+                                !canManage
+                              }
+                            >
+                              <MoreHorizontalIcon />
+                              <span className="sr-only">
+                                Open actions for {member.github_login}
+                              </span>
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                            <DropdownMenuGroup>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onSelect={() => void handleRemove(member)}
+                              >
+                                Remove member
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-24 text-center">
+                      No members found.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div className="overflow-hidden rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Invitation</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Expires</TableHead>
+                  <TableHead className="w-12">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {invitations.length ? (
+                  invitations.map((invitation) => (
+                    <TableRow key={invitation.id}>
+                      <TableCell className="font-medium">
+                        {invitation.email}
+                      </TableCell>
+                      <TableCell>
+                        {invitation.role === "admin" ? "Admin" : "Member"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={invitation.status === "pending" ? "secondary" : "outline"}>
+                          {formatInviteStatus(invitation.status)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{formatDate(invitation.expires_at)}</TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={
+                            !canManage || saving || invitation.status !== "pending"
+                          }
+                          onClick={() => void handleRevoke(invitation)}
+                        >
+                          Revoke
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-24 text-center">
+                      No outstanding invitations.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          {!canManage && (
+            <Alert>
+              <AlertDescription>
+                Organization owner or admin access is required to invite or
+                remove members.
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 
