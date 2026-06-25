@@ -91,6 +91,26 @@ struct SlackEventEnvelope {
 struct SlackEventPayload {
     #[serde(rename = "type")]
     event_type: String,
+    user: Option<String>,
+    channel: Option<SlackEventChannelValue>,
+    channel_type: Option<String>,
+    #[serde(default)]
+    channel_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum SlackEventChannelValue {
+    Id(String),
+    Object(SlackEventChannel),
+}
+
+#[derive(Debug, Deserialize)]
+struct SlackEventChannel {
+    id: String,
+    name: Option<String>,
+    is_channel: Option<bool>,
+    is_group: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -527,6 +547,16 @@ async fn handle_slack_event_callback(
                     .await?;
                 mark_slack_event_processed(state, &event_id, "processed", None).await?;
             }
+            "member_joined_channel" | "channel_joined" | "group_joined" => {
+                if let Some(target) =
+                    target_from_slack_event(envelope.event.as_ref(), &installation)
+                {
+                    upsert_slack_delivery_target(state, &installation, &target).await?;
+                    mark_slack_event_processed(state, &event_id, "processed", None).await?;
+                } else {
+                    mark_slack_event_processed(state, &event_id, "ignored", None).await?;
+                }
+            }
             _ => {
                 mark_slack_event_processed(state, &event_id, "ignored", None).await?;
             }
@@ -541,6 +571,7 @@ async fn handle_slack_event_callback(
 struct SlackInstallationRef {
     id: Uuid,
     organization_id: Uuid,
+    bot_user_id: String,
 }
 
 async fn find_slack_installation(
@@ -555,7 +586,7 @@ async fn find_slack_installation(
         return Ok(None);
     };
     let row = sqlx::query(
-        "select id, organization_id
+        "select id, organization_id, slack_bot_user_id
          from slack_installations
          where slack_team_id = $1 and slack_app_id = $2
          order by updated_at desc
@@ -569,7 +600,93 @@ async fn find_slack_installation(
     Ok(row.map(|row| SlackInstallationRef {
         id: row.get("id"),
         organization_id: row.get("organization_id"),
+        bot_user_id: row.get("slack_bot_user_id"),
     }))
+}
+
+struct SlackDeliveryTargetEvent {
+    channel_id: String,
+    channel_name: Option<String>,
+    channel_type: String,
+}
+
+fn target_from_slack_event(
+    event: Option<&SlackEventPayload>,
+    installation: &SlackInstallationRef,
+) -> Option<SlackDeliveryTargetEvent> {
+    let event = event?;
+    if let Some(user) = event.user.as_deref()
+        && user != installation.bot_user_id
+    {
+        return None;
+    }
+
+    match event.channel.as_ref()? {
+        SlackEventChannelValue::Object(channel) => Some(SlackDeliveryTargetEvent {
+            channel_id: truncate(&channel.id, 80),
+            channel_name: channel.name.as_deref().map(|name| truncate(name, 120)),
+            channel_type: channel_type_from_flags(channel.is_channel, channel.is_group)?,
+        }),
+        SlackEventChannelValue::Id(channel_id) => Some(SlackDeliveryTargetEvent {
+            channel_id: truncate(channel_id, 80),
+            channel_name: event
+                .channel_name
+                .as_deref()
+                .map(|name| truncate(name, 120)),
+            channel_type: normalize_slack_channel_type(event.channel_type.as_deref(), channel_id)?,
+        }),
+    }
+}
+
+async fn upsert_slack_delivery_target(
+    state: &AppState,
+    installation: &SlackInstallationRef,
+    target: &SlackDeliveryTargetEvent,
+) -> Result<(), SlackError> {
+    sqlx::query(
+        "insert into slack_delivery_targets
+         (id, organization_id, slack_installation_id, slack_channel_id,
+          slack_channel_name, channel_type, status, discovered_by,
+          last_seen_at, confirmed_at)
+         values ($1, $2, $3, $4, $5, $6, 'active', 'event', now(), null)
+         on conflict (slack_installation_id, slack_channel_id)
+         do update set slack_channel_name = excluded.slack_channel_name,
+                       channel_type = excluded.channel_type,
+                       status = 'active',
+                       discovered_by = 'event',
+                       last_seen_at = now(),
+                       updated_at = now()",
+    )
+    .bind(Uuid::new_v4())
+    .bind(installation.organization_id)
+    .bind(installation.id)
+    .bind(&target.channel_id)
+    .bind(&target.channel_name)
+    .bind(&target.channel_type)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+fn channel_type_from_flags(is_channel: Option<bool>, is_group: Option<bool>) -> Option<String> {
+    if is_group == Some(true) {
+        Some("private_channel".to_owned())
+    } else if is_channel == Some(true) {
+        Some("public_channel".to_owned())
+    } else {
+        None
+    }
+}
+
+fn normalize_slack_channel_type(channel_type: Option<&str>, channel_id: &str) -> Option<String> {
+    match channel_type.map(str::trim) {
+        Some("public_channel" | "channel" | "C") => Some("public_channel".to_owned()),
+        Some("private_channel" | "group" | "G") => Some("private_channel".to_owned()),
+        Some(_) => None,
+        None if channel_id.starts_with('C') => Some("public_channel".to_owned()),
+        None if channel_id.starts_with('G') => Some("private_channel".to_owned()),
+        None => None,
+    }
 }
 
 async fn record_slack_event(
@@ -971,15 +1088,18 @@ impl IntoResponse for SlackError {
 #[cfg(test)]
 mod tests {
     use super::{
-        SLACK_OAUTH_SCOPE, SlackOAuthAccessResponse, SlackOAuthTeam, build_slack_install_url,
-        decode_hex, is_safe_return_to, parse_scope_list, redirect_with_slack_status,
-        validate_oauth_access_response, verify_slack_signature,
+        SLACK_OAUTH_SCOPE, SlackEventChannel, SlackEventChannelValue, SlackEventPayload,
+        SlackInstallationRef, SlackOAuthAccessResponse, SlackOAuthTeam, build_slack_install_url,
+        decode_hex, is_safe_return_to, normalize_slack_channel_type, parse_scope_list,
+        redirect_with_slack_status, target_from_slack_event, validate_oauth_access_response,
+        verify_slack_signature,
     };
     use crate::SlackCloudConfig;
     use axum::http::HeaderMap;
     use chrono::Utc;
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
+    use uuid::Uuid;
 
     type TestHmacSha256 = Hmac<Sha256>;
 
@@ -1131,6 +1251,74 @@ mod tests {
         assert!(decode_hex("zz").is_none());
     }
 
+    #[test]
+    fn maps_bot_member_joined_channel_event_to_delivery_target() {
+        let installation = test_installation_ref();
+        let event = SlackEventPayload {
+            event_type: "member_joined_channel".to_owned(),
+            user: Some("U_BOT".to_owned()),
+            channel: Some(SlackEventChannelValue::Id("C123".to_owned())),
+            channel_type: Some("C".to_owned()),
+            channel_name: Some("incidents".to_owned()),
+        };
+
+        let target = target_from_slack_event(Some(&event), &installation).unwrap();
+
+        assert_eq!(target.channel_id, "C123");
+        assert_eq!(target.channel_name.as_deref(), Some("incidents"));
+        assert_eq!(target.channel_type, "public_channel");
+    }
+
+    #[test]
+    fn ignores_non_bot_member_joined_channel_event() {
+        let installation = test_installation_ref();
+        let event = SlackEventPayload {
+            event_type: "member_joined_channel".to_owned(),
+            user: Some("U_OTHER".to_owned()),
+            channel: Some(SlackEventChannelValue::Id("C123".to_owned())),
+            channel_type: Some("C".to_owned()),
+            channel_name: Some("incidents".to_owned()),
+        };
+
+        assert!(target_from_slack_event(Some(&event), &installation).is_none());
+    }
+
+    #[test]
+    fn maps_channel_object_event_to_private_delivery_target() {
+        let installation = test_installation_ref();
+        let event = SlackEventPayload {
+            event_type: "channel_joined".to_owned(),
+            user: None,
+            channel: Some(SlackEventChannelValue::Object(SlackEventChannel {
+                id: "G123".to_owned(),
+                name: Some("private-incidents".to_owned()),
+                is_channel: Some(false),
+                is_group: Some(true),
+            })),
+            channel_type: None,
+            channel_name: None,
+        };
+
+        let target = target_from_slack_event(Some(&event), &installation).unwrap();
+
+        assert_eq!(target.channel_id, "G123");
+        assert_eq!(target.channel_name.as_deref(), Some("private-incidents"));
+        assert_eq!(target.channel_type, "private_channel");
+    }
+
+    #[test]
+    fn infers_channel_type_from_channel_id_prefix() {
+        assert_eq!(
+            normalize_slack_channel_type(None, "C123").as_deref(),
+            Some("public_channel")
+        );
+        assert_eq!(
+            normalize_slack_channel_type(None, "G123").as_deref(),
+            Some("private_channel")
+        );
+        assert!(normalize_slack_channel_type(None, "D123").is_none());
+    }
+
     fn test_signature(signing_secret: &str, timestamp: &str, body: &[u8]) -> String {
         let mut mac = TestHmacSha256::new_from_slice(signing_secret.as_bytes()).unwrap();
         mac.update(b"v0:");
@@ -1142,5 +1330,13 @@ mod tests {
 
     fn encode_hex(bytes: &[u8]) -> String {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn test_installation_ref() -> SlackInstallationRef {
+        SlackInstallationRef {
+            id: Uuid::new_v4(),
+            organization_id: Uuid::new_v4(),
+            bot_user_id: "U_BOT".to_owned(),
+        }
     }
 }
