@@ -1,5 +1,6 @@
 use axum::{
     Json,
+    body::Bytes,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
@@ -8,6 +9,7 @@ use axum_extra::extract::cookie::CookieJar;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bella_slack::{PostedMessage, SlackClientError};
 use chrono::{Duration as ChronoDuration, Utc};
+use hmac::{Hmac, Mac};
 use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -22,6 +24,10 @@ use crate::{
 
 const SLACK_OAUTH_SCOPE: &str = "chat:write,channels:read,groups:read";
 const SLACK_OAUTH_STATE_TTL_MINUTES: i64 = 10;
+const SLACK_SIGNATURE_VERSION: &str = "v0";
+const SLACK_SIGNATURE_MAX_AGE_SECONDS: i64 = 60 * 5;
+
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Deserialize)]
 pub struct InstallUrlRequest {
@@ -68,6 +74,33 @@ struct SlackOAuthTeam {
 #[derive(Debug, Deserialize)]
 struct SlackOAuthEnterprise {
     id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SlackEventEnvelope {
+    #[serde(rename = "type")]
+    envelope_type: String,
+    challenge: Option<String>,
+    event_id: Option<String>,
+    team_id: Option<String>,
+    api_app_id: Option<String>,
+    event: Option<SlackEventPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SlackEventPayload {
+    #[serde(rename = "type")]
+    event_type: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SlackEventAck {
+    ok: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct SlackUrlVerificationResponse {
+    challenge: String,
 }
 
 pub async fn install_url(
@@ -122,6 +155,33 @@ pub async fn oauth_callback(
         }
     };
     Ok(Redirect::to(&redirect))
+}
+
+pub async fn events(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, SlackError> {
+    let slack_cloud = state
+        .config
+        .slack_cloud
+        .as_ref()
+        .ok_or(SlackError::CloudNotConfigured)?;
+    verify_slack_signature(&headers, &body, &slack_cloud.signing_secret)?;
+
+    let envelope = serde_json::from_slice::<SlackEventEnvelope>(&body)
+        .map_err(|_| SlackError::InvalidEventPayload)?;
+    match envelope.envelope_type.as_str() {
+        "url_verification" => {
+            let challenge = envelope.challenge.ok_or(SlackError::InvalidEventPayload)?;
+            Ok(Json(SlackUrlVerificationResponse { challenge }).into_response())
+        }
+        "event_callback" => {
+            handle_slack_event_callback(&state, envelope).await?;
+            Ok(Json(SlackEventAck { ok: true }).into_response())
+        }
+        _ => Ok(Json(SlackEventAck { ok: true }).into_response()),
+    }
 }
 
 pub async fn send_test_message(
@@ -424,6 +484,183 @@ async fn upsert_slack_installation(
     Ok(())
 }
 
+async fn handle_slack_event_callback(
+    state: &AppState,
+    envelope: SlackEventEnvelope,
+) -> Result<(), SlackError> {
+    let event_id = envelope.event_id.ok_or(SlackError::InvalidEventPayload)?;
+    let event_type = envelope
+        .event
+        .as_ref()
+        .map(|event| event.event_type.as_str())
+        .unwrap_or("unknown");
+    let installation = find_slack_installation(
+        state,
+        envelope.team_id.as_deref(),
+        envelope.api_app_id.as_deref(),
+    )
+    .await?;
+    let inserted = record_slack_event(
+        state,
+        &event_id,
+        envelope.team_id.as_deref(),
+        envelope.api_app_id.as_deref(),
+        event_type,
+        installation
+            .as_ref()
+            .map(|installation| installation.organization_id),
+        installation.as_ref().map(|installation| installation.id),
+    )
+    .await?;
+    if !inserted {
+        return Ok(());
+    }
+
+    if let Some(installation) = installation {
+        match event_type {
+            "app_uninstalled" => {
+                mark_slack_installation_uninstalled(state, installation.id).await?;
+                mark_slack_event_processed(state, &event_id, "processed", None).await?;
+            }
+            "tokens_revoked" => {
+                mark_slack_installation_needs_attention(state, installation.id, "token_revoked")
+                    .await?;
+                mark_slack_event_processed(state, &event_id, "processed", None).await?;
+            }
+            _ => {
+                mark_slack_event_processed(state, &event_id, "ignored", None).await?;
+            }
+        }
+    } else {
+        mark_slack_event_processed(state, &event_id, "ignored", Some("installation_not_found"))
+            .await?;
+    }
+    Ok(())
+}
+
+struct SlackInstallationRef {
+    id: Uuid,
+    organization_id: Uuid,
+}
+
+async fn find_slack_installation(
+    state: &AppState,
+    slack_team_id: Option<&str>,
+    slack_app_id: Option<&str>,
+) -> Result<Option<SlackInstallationRef>, SlackError> {
+    let Some(slack_team_id) = slack_team_id else {
+        return Ok(None);
+    };
+    let Some(slack_app_id) = slack_app_id else {
+        return Ok(None);
+    };
+    let row = sqlx::query(
+        "select id, organization_id
+         from slack_installations
+         where slack_team_id = $1 and slack_app_id = $2
+         order by updated_at desc
+         limit 1",
+    )
+    .bind(slack_team_id)
+    .bind(slack_app_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    Ok(row.map(|row| SlackInstallationRef {
+        id: row.get("id"),
+        organization_id: row.get("organization_id"),
+    }))
+}
+
+async fn record_slack_event(
+    state: &AppState,
+    slack_event_id: &str,
+    slack_team_id: Option<&str>,
+    slack_app_id: Option<&str>,
+    slack_event_type: &str,
+    organization_id: Option<Uuid>,
+    slack_installation_id: Option<Uuid>,
+) -> Result<bool, SlackError> {
+    let row = sqlx::query(
+        "insert into slack_events
+         (id, slack_event_id, slack_team_id, slack_app_id, slack_event_type,
+          organization_id, slack_installation_id)
+         values ($1, $2, $3, $4, $5, $6, $7)
+         on conflict (slack_event_id) do nothing
+         returning id",
+    )
+    .bind(Uuid::new_v4())
+    .bind(slack_event_id)
+    .bind(slack_team_id)
+    .bind(slack_app_id)
+    .bind(truncate(slack_event_type, 120))
+    .bind(organization_id)
+    .bind(slack_installation_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    Ok(row.is_some())
+}
+
+async fn mark_slack_event_processed(
+    state: &AppState,
+    slack_event_id: &str,
+    status: &str,
+    error: Option<&str>,
+) -> Result<(), SlackError> {
+    sqlx::query(
+        "update slack_events
+         set status = $2,
+             last_error = $3,
+             processed_at = now(),
+             updated_at = now()
+         where slack_event_id = $1",
+    )
+    .bind(slack_event_id)
+    .bind(status)
+    .bind(error.map(|value| truncate(value, 1_000)))
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+async fn mark_slack_installation_uninstalled(
+    state: &AppState,
+    slack_installation_id: Uuid,
+) -> Result<(), SlackError> {
+    sqlx::query(
+        "update slack_installations
+         set status = 'uninstalled',
+             status_reason = 'app_uninstalled',
+             revoked_at = now(),
+             updated_at = now()
+         where id = $1",
+    )
+    .bind(slack_installation_id)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+async fn mark_slack_installation_needs_attention(
+    state: &AppState,
+    slack_installation_id: Uuid,
+    reason: &str,
+) -> Result<(), SlackError> {
+    sqlx::query(
+        "update slack_installations
+         set status = 'needs_attention',
+             status_reason = $2,
+             updated_at = now()
+         where id = $1",
+    )
+    .bind(slack_installation_id)
+    .bind(reason)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
 fn build_slack_install_url(
     config: &SlackCloudConfig,
     oauth_state: &str,
@@ -455,6 +692,65 @@ fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+fn verify_slack_signature(
+    headers: &HeaderMap,
+    body: &[u8],
+    signing_secret: &str,
+) -> Result<(), SlackError> {
+    let timestamp = header_value(headers, "x-slack-request-timestamp")
+        .and_then(|value| value.parse::<i64>().ok())
+        .ok_or(SlackError::InvalidSignature)?;
+    let now = Utc::now().timestamp();
+    if (now - timestamp).abs() > SLACK_SIGNATURE_MAX_AGE_SECONDS {
+        return Err(SlackError::InvalidSignature);
+    }
+
+    let signature =
+        header_value(headers, "x-slack-signature").ok_or(SlackError::InvalidSignature)?;
+    let signature_hex = signature
+        .strip_prefix("v0=")
+        .ok_or(SlackError::InvalidSignature)?;
+    let signature_bytes = decode_hex(signature_hex).ok_or(SlackError::InvalidSignature)?;
+
+    let mut mac = HmacSha256::new_from_slice(signing_secret.as_bytes())
+        .map_err(|_| SlackError::Configuration)?;
+    mac.update(SLACK_SIGNATURE_VERSION.as_bytes());
+    mac.update(b":");
+    mac.update(timestamp.to_string().as_bytes());
+    mac.update(b":");
+    mac.update(body);
+    mac.verify_slice(&signature_bytes)
+        .map_err(|_| SlackError::InvalidSignature)
+}
+
+fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name)?.to_str().ok().map(str::trim)
+}
+
+fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    if !value.len().is_multiple_of(2) {
+        return None;
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|chunk| {
+            let high = hex_value(chunk[0])?;
+            let low = hex_value(chunk[1])?;
+            Some((high << 4) | low)
+        })
+        .collect()
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn is_safe_return_to(value: &str, web_url: &str) -> bool {
@@ -520,6 +816,8 @@ pub enum SlackError {
     Forbidden,
     InvalidOAuthResponse,
     InvalidOAuthState,
+    InvalidEventPayload,
+    InvalidSignature,
     MissingRequiredScope,
     NotConfigured,
     NotConfiguredForOrganization,
@@ -590,6 +888,16 @@ impl IntoResponse for SlackError {
             Self::InvalidOAuthState => (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "error": "Slack authorization session expired" })),
+            )
+                .into_response(),
+            Self::InvalidEventPayload => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "invalid Slack event payload" })),
+            )
+                .into_response(),
+            Self::InvalidSignature => (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "invalid Slack signature" })),
             )
                 .into_response(),
             Self::SlackUnavailable => (
@@ -664,10 +972,16 @@ impl IntoResponse for SlackError {
 mod tests {
     use super::{
         SLACK_OAUTH_SCOPE, SlackOAuthAccessResponse, SlackOAuthTeam, build_slack_install_url,
-        is_safe_return_to, parse_scope_list, redirect_with_slack_status,
-        validate_oauth_access_response,
+        decode_hex, is_safe_return_to, parse_scope_list, redirect_with_slack_status,
+        validate_oauth_access_response, verify_slack_signature,
     };
     use crate::SlackCloudConfig;
+    use axum::http::HeaderMap;
+    use chrono::Utc;
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    type TestHmacSha256 = Hmac<Sha256>;
 
     #[test]
     fn builds_slack_install_url_with_minimal_bot_scopes() {
@@ -785,5 +1099,48 @@ mod tests {
         };
 
         assert!(validate_oauth_access_response(&response).is_err());
+    }
+
+    #[test]
+    fn verifies_valid_slack_signature() {
+        let body = br#"{"type":"event_callback","event_id":"Ev123"}"#;
+        let timestamp = Utc::now().timestamp().to_string();
+        let signature = test_signature("signing-secret", &timestamp, body);
+        let mut headers = HeaderMap::new();
+        headers.insert("x-slack-request-timestamp", timestamp.parse().unwrap());
+        headers.insert("x-slack-signature", signature.parse().unwrap());
+
+        verify_slack_signature(&headers, body, "signing-secret").unwrap();
+    }
+
+    #[test]
+    fn rejects_stale_slack_signature_timestamp() {
+        let body = br#"{"type":"event_callback","event_id":"Ev123"}"#;
+        let timestamp = (Utc::now().timestamp() - 600).to_string();
+        let signature = test_signature("signing-secret", &timestamp, body);
+        let mut headers = HeaderMap::new();
+        headers.insert("x-slack-request-timestamp", timestamp.parse().unwrap());
+        headers.insert("x-slack-signature", signature.parse().unwrap());
+
+        assert!(verify_slack_signature(&headers, body, "signing-secret").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_hex_signatures() {
+        assert!(decode_hex("abc").is_none());
+        assert!(decode_hex("zz").is_none());
+    }
+
+    fn test_signature(signing_secret: &str, timestamp: &str, body: &[u8]) -> String {
+        let mut mac = TestHmacSha256::new_from_slice(signing_secret.as_bytes()).unwrap();
+        mac.update(b"v0:");
+        mac.update(timestamp.as_bytes());
+        mac.update(b":");
+        mac.update(body);
+        format!("v0={}", encode_hex(&mac.finalize().into_bytes()))
+    }
+
+    fn encode_hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 }

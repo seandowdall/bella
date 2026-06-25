@@ -226,6 +226,13 @@ fn rate_limit_policy(method: &Method, path: &str) -> Option<RateLimitPolicy> {
             window: Duration::from_secs(60),
         });
     }
+    if method == Method::POST && path == "/v1/slack/events" {
+        return Some(RateLimitPolicy {
+            name: "slack_events",
+            limit: 600,
+            window: Duration::from_secs(60),
+        });
+    }
     if method == Method::POST && path.ends_with("/sync") {
         return Some(RateLimitPolicy {
             name: "provider_sync",

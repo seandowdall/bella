@@ -255,6 +255,7 @@ dependencies = [
  "bella-slack",
  "chrono",
  "dotenvy",
+ "hmac",
  "rand 0.8.6",
  "reqwest",
  "serde",
