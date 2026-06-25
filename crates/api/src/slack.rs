@@ -109,9 +109,43 @@ impl IntoResponse for SlackError {
                 })),
             )
                 .into_response(),
-            Self::Client(SlackClientError::Rejected) => (
+            Self::Client(SlackClientError::ChannelArchived) => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": "Slack channel is archived" })),
+            )
+                .into_response(),
+            Self::Client(SlackClientError::ChannelNotFound) => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": "Slack channel was not found" })),
+            )
+                .into_response(),
+            Self::Client(SlackClientError::MissingScope) => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "Slack installation is missing a required scope"
+                })),
+            )
+                .into_response(),
+            Self::Client(SlackClientError::NotInChannel) => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": "Slack bot is not in the channel" })),
+            )
+                .into_response(),
+            Self::Client(SlackClientError::RateLimited { .. }) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({ "error": "Slack rate limited the message" })),
+            )
+                .into_response(),
+            Self::Client(SlackClientError::Rejected { .. }) => (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({ "error": "Slack rejected the message" })),
+            )
+                .into_response(),
+            Self::Client(SlackClientError::TokenRevoked) => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "Slack installation needs attention"
+                })),
             )
                 .into_response(),
             Self::Client(SlackClientError::Unavailable) => (

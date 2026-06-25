@@ -214,7 +214,19 @@ fn retry_delay_seconds(attempts: i32) -> i32 {
 
 fn slack_error(error: SlackClientError) -> anyhow::Error {
     match error {
-        SlackClientError::Rejected => anyhow::anyhow!("Slack rejected the incident message"),
+        SlackClientError::ChannelArchived => anyhow::anyhow!("Slack channel is archived"),
+        SlackClientError::ChannelNotFound => anyhow::anyhow!("Slack channel was not found"),
+        SlackClientError::MissingScope => {
+            anyhow::anyhow!("Slack installation is missing a required scope")
+        }
+        SlackClientError::NotInChannel => {
+            anyhow::anyhow!("Slack bot is not in the configured channel")
+        }
+        SlackClientError::RateLimited { .. } => {
+            anyhow::anyhow!("Slack rate limited the incident message")
+        }
+        SlackClientError::Rejected { .. } => anyhow::anyhow!("Slack rejected the incident message"),
+        SlackClientError::TokenRevoked => anyhow::anyhow!("Slack bot token is revoked or invalid"),
         SlackClientError::Unavailable => anyhow::anyhow!("Slack is unavailable"),
     }
 }

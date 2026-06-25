@@ -2,7 +2,7 @@ use std::env;
 
 use anyhow::Context;
 use chrono::{DateTime, SecondsFormat, Utc};
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -11,7 +11,7 @@ const TEST_MESSAGE: &str = "Bella Slack integration is connected.";
 
 #[derive(Clone)]
 pub struct SlackConfig {
-    bot_token: String,
+    bot_token: SlackBotToken,
     default_channel_id: String,
     organization_id: Uuid,
 }
@@ -33,7 +33,7 @@ impl SlackConfig {
         match (bot_token, default_channel_id, organization_id) {
             (None, None, None) => Ok(None),
             (Some(bot_token), Some(default_channel_id), Some(organization_id)) => Ok(Some(Self {
-                bot_token,
+                bot_token: SlackBotToken::new(bot_token)?,
                 default_channel_id,
                 organization_id: organization_id
                     .parse()
@@ -62,9 +62,28 @@ fn optional_env(name: &str) -> anyhow::Result<Option<String>> {
 }
 
 #[derive(Clone)]
+pub struct SlackBotToken {
+    value: String,
+}
+
+impl SlackBotToken {
+    pub fn new(value: impl Into<String>) -> anyhow::Result<Self> {
+        let value = value.into().trim().to_owned();
+        if value.is_empty() {
+            anyhow::bail!("Slack bot token must not be empty");
+        }
+        Ok(Self { value })
+    }
+
+    fn as_str(&self) -> &str {
+        &self.value
+    }
+}
+
+#[derive(Clone)]
 pub struct SlackClient {
     client: Client,
-    bot_token: String,
+    bot_token: SlackBotToken,
     default_channel_id: String,
     organization_id: Uuid,
 }
@@ -84,7 +103,16 @@ impl SlackClient {
     }
 
     pub async fn post_test_message(&self) -> Result<PostedMessage, SlackClientError> {
-        self.post_message(&self.default_channel_id, TEST_MESSAGE, None)
+        self.post_test_message_with_token(&self.bot_token, &self.default_channel_id)
+            .await
+    }
+
+    pub async fn post_test_message_with_token(
+        &self,
+        bot_token: &SlackBotToken,
+        channel_id: &str,
+    ) -> Result<PostedMessage, SlackClientError> {
+        self.post_message_with_token(bot_token, channel_id, TEST_MESSAGE, None)
             .await
     }
 
@@ -92,8 +120,19 @@ impl SlackClient {
         &self,
         incident: &IncidentSlackReport,
     ) -> Result<PostedMessage, SlackClientError> {
-        self.post_message(
-            &self.default_channel_id,
+        self.post_incident_opened_with_token(&self.bot_token, &self.default_channel_id, incident)
+            .await
+    }
+
+    pub async fn post_incident_opened_with_token(
+        &self,
+        bot_token: &SlackBotToken,
+        channel_id: &str,
+        incident: &IncidentSlackReport,
+    ) -> Result<PostedMessage, SlackClientError> {
+        self.post_message_with_token(
+            bot_token,
+            channel_id,
             &render_incident_opened(incident),
             None,
         )
@@ -106,10 +145,21 @@ impl SlackClient {
         text: &str,
         thread_ts: Option<&str>,
     ) -> Result<PostedMessage, SlackClientError> {
+        self.post_message_with_token(&self.bot_token, channel_id, text, thread_ts)
+            .await
+    }
+
+    pub async fn post_message_with_token(
+        &self,
+        bot_token: &SlackBotToken,
+        channel_id: &str,
+        text: &str,
+        thread_ts: Option<&str>,
+    ) -> Result<PostedMessage, SlackClientError> {
         let response = self
             .client
             .post(POST_MESSAGE_URL)
-            .bearer_auth(&self.bot_token)
+            .bearer_auth(bot_token.as_str())
             .json(&PostMessageRequest {
                 channel: channel_id,
                 text,
@@ -122,6 +172,21 @@ impl SlackClient {
                 SlackClientError::Unavailable
             })?;
 
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            let retry_after_seconds = response
+                .headers()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok());
+            tracing::warn!(
+                retry_after_seconds,
+                "Slack chat.postMessage was rate limited"
+            );
+            return Err(SlackClientError::RateLimited {
+                retry_after_seconds,
+            });
+        }
+
         if !response.status().is_success() {
             tracing::warn!(status = %response.status(), "Slack chat.postMessage returned an error status");
             return Err(SlackClientError::Unavailable);
@@ -132,8 +197,9 @@ impl SlackClient {
             SlackClientError::Unavailable
         })?;
         if !payload.ok {
-            tracing::warn!(error = ?payload.error, "Slack chat.postMessage was rejected");
-            return Err(SlackClientError::Rejected);
+            let error = payload.error.as_deref();
+            tracing::warn!(error, "Slack chat.postMessage was rejected");
+            return Err(SlackClientError::from_slack_error(error));
         }
 
         let channel_id = payload.channel.ok_or_else(|| {
@@ -160,8 +226,43 @@ pub struct PostedMessage {
 
 #[derive(Debug)]
 pub enum SlackClientError {
-    Rejected,
+    ChannelArchived,
+    ChannelNotFound,
+    MissingScope,
+    NotInChannel,
+    RateLimited { retry_after_seconds: Option<u64> },
+    Rejected { reason: Option<String> },
+    TokenRevoked,
     Unavailable,
+}
+
+impl SlackClientError {
+    fn from_slack_error(error: Option<&str>) -> Self {
+        match error {
+            Some("account_inactive" | "invalid_auth" | "not_authed" | "token_revoked") => {
+                Self::TokenRevoked
+            }
+            Some("missing_scope") => Self::MissingScope,
+            Some("not_in_channel") => Self::NotInChannel,
+            Some("channel_not_found") => Self::ChannelNotFound,
+            Some("is_archived") => Self::ChannelArchived,
+            Some("ratelimited") => Self::RateLimited {
+                retry_after_seconds: None,
+            },
+            Some(reason) => Self::Rejected {
+                reason: Some(sanitize_slack_error(reason)),
+            },
+            None => Self::Rejected { reason: None },
+        }
+    }
+}
+
+fn sanitize_slack_error(reason: &str) -> String {
+    reason
+        .chars()
+        .filter(|value| value.is_ascii_alphanumeric() || matches!(value, '_' | '-' | '.'))
+        .take(120)
+        .collect()
 }
 
 #[derive(Debug)]
@@ -211,7 +312,10 @@ struct PostMessageResponse {
 mod tests {
     use chrono::{TimeZone, Utc};
 
-    use super::{IncidentSlackReport, PostMessageRequest, SlackConfig, render_incident_opened};
+    use super::{
+        IncidentSlackReport, PostMessageRequest, SlackBotToken, SlackClientError, SlackConfig,
+        render_incident_opened, sanitize_slack_error,
+    };
 
     #[test]
     fn requires_complete_slack_configuration() {
@@ -256,6 +360,57 @@ mod tests {
         .unwrap();
 
         assert_eq!(payload["thread_ts"], "123.456");
+    }
+
+    #[test]
+    fn rejects_empty_bot_tokens() {
+        assert!(SlackBotToken::new("").is_err());
+        assert!(SlackBotToken::new("   ").is_err());
+        assert!(SlackBotToken::new("xoxb-token").is_ok());
+    }
+
+    #[test]
+    fn maps_slack_rejections_to_actionable_errors() {
+        assert!(matches!(
+            SlackClientError::from_slack_error(Some("token_revoked")),
+            SlackClientError::TokenRevoked
+        ));
+        assert!(matches!(
+            SlackClientError::from_slack_error(Some("missing_scope")),
+            SlackClientError::MissingScope
+        ));
+        assert!(matches!(
+            SlackClientError::from_slack_error(Some("not_in_channel")),
+            SlackClientError::NotInChannel
+        ));
+        assert!(matches!(
+            SlackClientError::from_slack_error(Some("channel_not_found")),
+            SlackClientError::ChannelNotFound
+        ));
+        assert!(matches!(
+            SlackClientError::from_slack_error(Some("is_archived")),
+            SlackClientError::ChannelArchived
+        ));
+        assert!(matches!(
+            SlackClientError::from_slack_error(Some("ratelimited")),
+            SlackClientError::RateLimited {
+                retry_after_seconds: None
+            }
+        ));
+    }
+
+    #[test]
+    fn sanitizes_unknown_slack_error_reasons() {
+        assert_eq!(
+            sanitize_slack_error("invalid<secret-ish>value"),
+            "invalidsecret-ishvalue"
+        );
+        match SlackClientError::from_slack_error(Some("some/error with spaces")) {
+            SlackClientError::Rejected {
+                reason: Some(reason),
+            } => assert_eq!(reason, "someerrorwithspaces"),
+            error => panic!("expected sanitized rejection, got {error:?}"),
+        }
     }
 
     #[test]
