@@ -45,6 +45,8 @@ struct Config {
     secure_cookies: bool,
     openai_base_url: String,
     posthog_webhook_secret: Option<String>,
+    resend_api_key: Option<String>,
+    email_from: Option<String>,
     allowed_origins: Vec<String>,
 }
 
@@ -60,6 +62,14 @@ impl Config {
         let openai_base_url =
             env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com".to_string());
         let posthog_webhook_secret = env::var("POSTHOG_WEBHOOK_SECRET")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let resend_api_key = env::var("RESEND_API_KEY")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let email_from = env::var("BELLA_EMAIL_FROM")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
@@ -95,6 +105,8 @@ impl Config {
             secure_cookies,
             openai_base_url,
             posthog_webhook_secret,
+            resend_api_key,
+            email_from,
             allowed_origins,
         })
     }
@@ -282,6 +294,26 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/organizations/:organization_id/agent/settings/:setting_id/default",
             post(agent_settings::set_default),
+        )
+        .route(
+            "/v1/organizations/:organization_id/members",
+            get(organizations::members),
+        )
+        .route(
+            "/v1/organizations/:organization_id/members/:member_user_id",
+            patch(organizations::update_member).delete(organizations::remove_member),
+        )
+        .route(
+            "/v1/organizations/:organization_id/invitations",
+            post(organizations::create_invitation),
+        )
+        .route(
+            "/v1/organizations/:organization_id/invitations/:invitation_id",
+            axum::routing::delete(organizations::revoke_invitation),
+        )
+        .route(
+            "/v1/invitations/accept",
+            post(organizations::accept_invitation),
         )
         .layer(cors)
         .layer(middleware::from_fn_with_state(
