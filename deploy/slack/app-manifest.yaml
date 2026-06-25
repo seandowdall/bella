@@ -1,0 +1,27 @@
+# Bella self-hosted Slack app.
+#
+# Import in Slack: Your Apps -> Create New App -> From an app manifest.
+# This initial manifest supports outbound incident delivery only. It intentionally
+# does not enable event subscriptions, interactive components, or slash commands.
+
+display_information:
+  name: Bella
+  description: Sends Bella incident reports and investigation updates to Slack.
+  background_color: "#111827"
+
+features:
+  bot_user:
+    display_name: Bella
+    always_online: false
+
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - channels:read
+      - groups:read
+
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

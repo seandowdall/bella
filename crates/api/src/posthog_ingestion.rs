@@ -13,6 +13,8 @@ use uuid::Uuid;
 
 use crate::AppState;
 
+const MAX_SLACK_INCIDENT_DELIVERIES_PER_WINDOW: i64 = 20;
+
 #[derive(Debug, Deserialize)]
 pub struct PosthogWebhookQuery {
     secret: Option<String>,
@@ -58,7 +60,7 @@ pub async fn webhook(
                        severity = excluded.severity,
                        updated_at = now(),
                        metadata = incidents.metadata || excluded.metadata
-         returning id, status",
+         returning id, status, (xmax = 0) as inserted",
     )
     .bind(incident_id)
     .bind(organization_id)
@@ -74,6 +76,7 @@ pub async fn webhook(
     .await?;
     let incident_id: Uuid = incident.get("id");
     let incident_status: String = incident.get("status");
+    let created_incident: bool = incident.get("inserted");
 
     let signal = sqlx::query(
         "insert into signals
@@ -120,6 +123,22 @@ pub async fn webhook(
         .await?;
     }
 
+    if created_incident
+        && can_enqueue_slack_incident_delivery(&mut transaction, organization_id).await?
+    {
+        sqlx::query(
+            "insert into incident_delivery_jobs
+             (id, organization_id, incident_id, delivery_type, dedupe_key)
+             values ($1, $2, $3, 'slack.incident_opened', $4)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(organization_id)
+        .bind(incident_id)
+        .bind(format!("slack.incident_opened:{incident_id}"))
+        .execute(&mut *transaction)
+        .await?;
+    }
+
     transaction.commit().await?;
 
     let status = if inserted_signal {
@@ -136,6 +155,29 @@ pub async fn webhook(
             incident_status,
         }),
     ))
+}
+
+async fn can_enqueue_slack_incident_delivery(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    organization_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query("select pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+        .bind(organization_id)
+        .execute(&mut **transaction)
+        .await?;
+
+    let count: i64 = sqlx::query_scalar(
+        "select count(*)
+         from incident_delivery_jobs
+         where organization_id = $1
+           and delivery_type = 'slack.incident_opened'
+           and created_at >= now() - interval '5 minutes'",
+    )
+    .bind(organization_id)
+    .fetch_one(&mut **transaction)
+    .await?;
+
+    Ok(count < MAX_SLACK_INCIDENT_DELIVERIES_PER_WINDOW)
 }
 
 async fn verify_secret(

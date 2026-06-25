@@ -13,6 +13,7 @@ base64.workspace = true
 bella-core.workspace = true
 bella-db.workspace = true
 bella-ingestion.workspace = true
+bella-slack.workspace = true
 chrono.workspace = true
 dotenvy.workspace = true
 rand.workspace = true

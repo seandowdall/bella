@@ -1,5 +1,8 @@
+mod incident_delivery;
+
 use std::{env, time::Duration};
 
+use bella_slack::{SlackClient, SlackConfig};
 use sqlx::Row;
 use tracing_subscriber::{EnvFilter, fmt};
 use uuid::Uuid;
@@ -26,6 +29,8 @@ async fn main() -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
+    let slack_client =
+        SlackConfig::from_env()?.map(|config| SlackClient::new(client.clone(), config));
 
     let db = bella_db::connect(&database_url).await?;
     bella_db::run_migrations(&db).await?;
@@ -35,6 +40,8 @@ async fn main() -> anyhow::Result<()> {
         credential_cipher,
         openai_base_url,
     );
+    let incident_delivery =
+        incident_delivery::IncidentDeliveryWorker::new(db.clone(), slack_client);
 
     tracing::info!(poll_interval, "bella-worker started");
     loop {
@@ -50,6 +57,9 @@ async fn main() -> anyhow::Result<()> {
                 ),
                 Err(error) => tracing::warn!(%error, %account_id, "provider account sync failed"),
             }
+        }
+        if let Err(error) = incident_delivery.process_due().await {
+            tracing::warn!(%error, "incident delivery processing failed");
         }
         tokio::time::sleep(Duration::from_secs(poll_interval)).await;
     }
