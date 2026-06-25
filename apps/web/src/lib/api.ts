@@ -16,56 +16,53 @@ import type {
   SlackTestMessage,
   UsageSummary,
   User,
-} from "@/lib/dashboard-types"
+} from "@/lib/dashboard-types";
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_BELLA_API_BASE_URL ?? "/api"
-const apiTimeoutMs = 3_000
+const apiBaseUrl = process.env.NEXT_PUBLIC_BELLA_API_BASE_URL ?? "/api";
+const apiTimeoutMs = 3_000;
 
-async function apiFetch(
-  input: string,
-  init: RequestInit & { timeoutMs?: number } = {},
-) {
-  const { signal, timeoutMs = apiTimeoutMs, ...requestInit } = init
-  const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
+async function apiFetch(input: string, init: RequestInit & { timeoutMs?: number } = {}) {
+  const { signal, timeoutMs = apiTimeoutMs, ...requestInit } = init;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
-  const abort = () => controller.abort()
-  signal?.addEventListener("abort", abort, { once: true })
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
   try {
     return await fetch(input, {
       ...requestInit,
       signal: controller.signal,
-    })
+    });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("Bella API did not respond. Is `just dev` or `just api` running?")
+      throw new Error("Bella API did not respond. Is `just dev` or `just api` running?", {
+        cause: error,
+      });
     }
-    throw error
+    throw error;
   } finally {
-    window.clearTimeout(timeout)
-    signal?.removeEventListener("abort", abort)
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
   }
 }
 
 export async function getMe(): Promise<User | null> {
   const response = await apiFetch(`${apiBaseUrl}/v1/me`, {
     credentials: "include",
-  })
-  if (!response.ok) return null
-  return response.json() as Promise<User>
+  });
+  if (!response.ok) return null;
+  return response.json() as Promise<User>;
 }
 
 export async function getOrganizations(): Promise<Organization[]> {
   const response = await apiFetch(`${apiBaseUrl}/v1/organizations`, {
     credentials: "include",
-  })
-  if (!response.ok) throw new Error("Could not load your organizations.")
-  return response.json() as Promise<Organization[]>
+  });
+  if (!response.ok) throw new Error("Could not load your organizations.");
+  return response.json() as Promise<Organization[]>;
 }
 
-export async function createOrganization(
-  name: string,
-): Promise<Organization> {
+export async function createOrganization(name: string): Promise<Organization> {
   const response = await apiFetch(`${apiBaseUrl}/v1/organizations`, {
     method: "POST",
     credentials: "include",
@@ -74,23 +71,20 @@ export async function createOrganization(
       "Idempotency-Key": crypto.randomUUID(),
     },
     body: JSON.stringify({ name }),
-  })
-  const body = await response.json()
-  if (!response.ok) throw new Error(body.error ?? "Could not create the organization.")
-  return body as Organization
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error ?? "Could not create the organization.");
+  return body as Organization;
 }
 
-export async function getOrganizationMembers(
-  organizationId: string,
-): Promise<OrganizationMembers> {
-  const response = await apiFetch(
-    `${apiBaseUrl}/v1/organizations/${organizationId}/members`,
-    { credentials: "include" },
-  )
+export async function getOrganizationMembers(organizationId: string): Promise<OrganizationMembers> {
+  const response = await apiFetch(`${apiBaseUrl}/v1/organizations/${organizationId}/members`, {
+    credentials: "include",
+  });
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not load organization members."))
+    throw new Error(await errorMessage(response, "Could not load organization members."));
   }
-  return response.json() as Promise<OrganizationMembers>
+  return response.json() as Promise<OrganizationMembers>;
 }
 
 export async function inviteOrganizationMember({
@@ -98,24 +92,21 @@ export async function inviteOrganizationMember({
   email,
   role,
 }: {
-  organizationId: string
-  email: string
-  role: "admin" | "member"
+  organizationId: string;
+  email: string;
+  role: "admin" | "member";
 }) {
-  const response = await apiFetch(
-    `${apiBaseUrl}/v1/organizations/${organizationId}/invitations`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, role }),
-      timeoutMs: 10_000,
-    },
-  )
+  const response = await apiFetch(`${apiBaseUrl}/v1/organizations/${organizationId}/invitations`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, role }),
+    timeoutMs: 10_000,
+  });
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not send the invitation."))
+    throw new Error(await errorMessage(response, "Could not send the invitation."));
   }
-  return response.json()
+  return response.json();
 }
 
 export async function revokeOrganizationInvitation(
@@ -125,25 +116,23 @@ export async function revokeOrganizationInvitation(
   const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/invitations/${invitationId}`,
     { method: "DELETE", credentials: "include" },
-  )
+  );
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not revoke the invitation."))
+    throw new Error(await errorMessage(response, "Could not revoke the invitation."));
   }
 }
 
-export async function acceptOrganizationInvitation(
-  token: string,
-): Promise<Organization> {
+export async function acceptOrganizationInvitation(token: string): Promise<Organization> {
   const response = await apiFetch(`${apiBaseUrl}/v1/invitations/accept`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token }),
-  })
+  });
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not accept the invitation."))
+    throw new Error(await errorMessage(response, "Could not accept the invitation."));
   }
-  return response.json() as Promise<Organization>
+  return response.json() as Promise<Organization>;
 }
 
 export async function updateOrganizationMemberRole({
@@ -151,9 +140,9 @@ export async function updateOrganizationMemberRole({
   userId,
   role,
 }: {
-  organizationId: string
-  userId: string
-  role: Exclude<OrganizationRole, "owner">
+  organizationId: string;
+  userId: string;
+  role: Exclude<OrganizationRole, "owner">;
 }): Promise<OrganizationMember> {
   const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/members/${userId}`,
@@ -163,11 +152,11 @@ export async function updateOrganizationMemberRole({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role }),
     },
-  )
+  );
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not update member role."))
+    throw new Error(await errorMessage(response, "Could not update member role."));
   }
-  return response.json() as Promise<OrganizationMember>
+  return response.json() as Promise<OrganizationMember>;
 }
 
 export async function removeOrganizationMember(
@@ -177,9 +166,9 @@ export async function removeOrganizationMember(
   const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/members/${userId}`,
     { method: "DELETE", credentials: "include" },
-  )
+  );
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not remove member."))
+    throw new Error(await errorMessage(response, "Could not remove member."));
   }
 }
 
@@ -187,26 +176,24 @@ export async function logout(): Promise<void> {
   await apiFetch(`${apiBaseUrl}/v1/auth/logout`, {
     method: "POST",
     credentials: "include",
-  })
+  });
 }
 
 export async function getProviderCatalog(): Promise<ProviderDefinition[]> {
   const response = await apiFetch(`${apiBaseUrl}/v1/providers`, {
     credentials: "include",
-  })
-  if (!response.ok) throw new Error("Could not load the provider catalog.")
-  return response.json() as Promise<ProviderDefinition[]>
+  });
+  if (!response.ok) throw new Error("Could not load the provider catalog.");
+  return response.json() as Promise<ProviderDefinition[]>;
 }
 
-export async function getProviderAccounts(
-  organizationId: string,
-): Promise<ProviderAccount[]> {
+export async function getProviderAccounts(organizationId: string): Promise<ProviderAccount[]> {
   const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/provider-accounts`,
     { credentials: "include" },
-  )
-  if (!response.ok) throw new Error("Could not load provider accounts.")
-  return response.json() as Promise<ProviderAccount[]>
+  );
+  if (!response.ok) throw new Error("Could not load provider accounts.");
+  return response.json() as Promise<ProviderAccount[]>;
 }
 
 export async function connectProviderAccount({
@@ -216,11 +203,11 @@ export async function connectProviderAccount({
   displayName,
   secret,
 }: {
-  organizationId: string
-  workspaceId: string
-  provider: string
-  displayName: string
-  secret: string
+  organizationId: string;
+  workspaceId: string;
+  provider: string;
+  displayName: string;
+  secret: string;
 }): Promise<ProviderAccount> {
   const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/provider-accounts`,
@@ -235,23 +222,23 @@ export async function connectProviderAccount({
         credentials: { secret },
       }),
     },
-  )
-  const body = await response.json()
+  );
+  const body = await response.json();
   if (!response.ok) {
-    throw new Error(body.error ?? "Could not connect the provider.")
+    throw new Error(body.error ?? "Could not connect the provider.");
   }
-  return body as ProviderAccount
+  return body as ProviderAccount;
 }
 
 async function errorMessage(response: Response, fallback: string) {
-  const text = await response.text()
-  const fallbackWithStatus = `${fallback} HTTP ${response.status}.`
-  if (!text) return fallbackWithStatus
+  const text = await response.text();
+  const fallbackWithStatus = `${fallback} HTTP ${response.status}.`;
+  if (!text) return fallbackWithStatus;
   try {
-    const body = JSON.parse(text) as { error?: string }
-    return body.error ?? fallbackWithStatus
+    const body = JSON.parse(text) as { error?: string };
+    return body.error ?? fallbackWithStatus;
   } catch {
-    return fallbackWithStatus
+    return fallbackWithStatus;
   }
 }
 
@@ -265,11 +252,9 @@ export async function deleteProviderAccount(
       method: "DELETE",
       credentials: "include",
     },
-  )
+  );
   if (!response.ok) {
-    throw new Error(
-      await errorMessage(response, "Could not disconnect the provider."),
-    )
+    throw new Error(await errorMessage(response, "Could not disconnect the provider."));
   }
 }
 
@@ -286,12 +271,12 @@ export async function updateProviderAccount(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ display_name: displayName }),
     },
-  )
-  const body = await response.json()
+  );
+  const body = await response.json();
   if (!response.ok) {
-    throw new Error(body.error ?? "Could not update the provider account.")
+    throw new Error(body.error ?? "Could not update the provider account.");
   }
-  return body as ProviderAccount
+  return body as ProviderAccount;
 }
 
 export async function syncProviderAccount(
@@ -304,12 +289,12 @@ export async function syncProviderAccount(
       method: "POST",
       credentials: "include",
     },
-  )
-  const body = await response.json()
+  );
+  const body = await response.json();
   if (!response.ok) {
-    throw new Error(body.error ?? "Could not sync provider account.")
+    throw new Error(body.error ?? "Could not sync provider account.");
   }
-  return body as SyncOutcome
+  return body as SyncOutcome;
 }
 
 export async function getUsageSummary({
@@ -317,70 +302,64 @@ export async function getUsageSummary({
   start,
   end,
 }: {
-  organizationId: string
-  start: string
-  end: string
+  organizationId: string;
+  start: string;
+  end: string;
 }): Promise<UsageSummary> {
-  const params = new URLSearchParams({ start, end })
+  const params = new URLSearchParams({ start, end });
   const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/usage/summary?${params}`,
     { credentials: "include" },
-  )
+  );
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not load usage summary."))
+    throw new Error(await errorMessage(response, "Could not load usage summary."));
   }
-  return response.json() as Promise<UsageSummary>
+  return response.json() as Promise<UsageSummary>;
 }
 
-export async function getIncidents(
-  organizationId: string,
-): Promise<IncidentListItem[]> {
-  const response = await apiFetch(
-    `${apiBaseUrl}/v1/organizations/${organizationId}/incidents`,
-    { credentials: "include" },
-  )
+export async function getIncidents(organizationId: string): Promise<IncidentListItem[]> {
+  const response = await apiFetch(`${apiBaseUrl}/v1/organizations/${organizationId}/incidents`, {
+    credentials: "include",
+  });
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not load incidents."))
+    throw new Error(await errorMessage(response, "Could not load incidents."));
   }
-  return response.json() as Promise<IncidentListItem[]>
+  return response.json() as Promise<IncidentListItem[]>;
 }
 
 export async function getIncident({
   organizationId,
   incidentId,
 }: {
-  organizationId: string
-  incidentId: string
+  organizationId: string;
+  incidentId: string;
 }): Promise<IncidentDetail> {
   const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/incidents/${incidentId}`,
     { credentials: "include" },
-  )
+  );
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not load incident."))
+    throw new Error(await errorMessage(response, "Could not load incident."));
   }
-  return response.json() as Promise<IncidentDetail>
+  return response.json() as Promise<IncidentDetail>;
 }
 
-export async function getIntegrations(
-  organizationId: string,
-): Promise<Integration[]> {
-  const response = await apiFetch(
-    `${apiBaseUrl}/v1/organizations/${organizationId}/integrations`,
-    { credentials: "include" },
-  )
+export async function getIntegrations(organizationId: string): Promise<Integration[]> {
+  const response = await apiFetch(`${apiBaseUrl}/v1/organizations/${organizationId}/integrations`, {
+    credentials: "include",
+  });
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not load integrations."))
+    throw new Error(await errorMessage(response, "Could not load integrations."));
   }
-  return response.json() as Promise<Integration[]>
+  return response.json() as Promise<Integration[]>;
 }
 
 export async function connectPosthogIntegration({
   organizationId,
   displayName,
 }: {
-  organizationId: string
-  displayName?: string
+  organizationId: string;
+  displayName?: string;
 }): Promise<PosthogConnection> {
   const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/posthog`,
@@ -390,11 +369,11 @@ export async function connectPosthogIntegration({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ display_name: displayName ?? "PostHog" }),
     },
-  )
+  );
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not connect PostHog."))
+    throw new Error(await errorMessage(response, "Could not connect PostHog."));
   }
-  return response.json() as Promise<PosthogConnection>
+  return response.json() as Promise<PosthogConnection>;
 }
 
 export async function sendAgentMessage({
@@ -403,10 +382,10 @@ export async function sendAgentMessage({
   llmSettingId,
   signal,
 }: {
-  organizationId: string
-  message: string
-  llmSettingId?: string
-  signal?: AbortSignal
+  organizationId: string;
+  message: string;
+  llmSettingId?: string;
+  signal?: AbortSignal;
 }): Promise<AgentMessageResponse> {
   const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/agent/messages`,
@@ -417,45 +396,43 @@ export async function sendAgentMessage({
       body: JSON.stringify({ message, llm_setting_id: llmSettingId ?? null }),
       signal,
     },
-  )
+  );
   if (!response.ok) {
     throw new Error(
       await errorMessage(
         response,
         "Bella could not reach the agent API. Restart the API on this branch and try again.",
       ),
-    )
+    );
   }
-  return response.json() as Promise<AgentMessageResponse>
+  return response.json() as Promise<AgentMessageResponse>;
 }
 
-export async function getAgentLlmSettings(
-  organizationId: string,
-): Promise<AgentLlmSettingsList> {
+export async function getAgentLlmSettings(organizationId: string): Promise<AgentLlmSettingsList> {
   const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/agent/settings`,
     { credentials: "include" },
-  )
+  );
   if (!response.ok) {
     throw new Error(
       await errorMessage(
         response,
         "Could not load AI settings. Restart the API on this branch so the agent settings route and migration are available.",
       ),
-    )
+    );
   }
-  const body = (await response.json()) as AgentLlmSettingsList | AgentLlmSettings
+  const body = (await response.json()) as AgentLlmSettingsList | AgentLlmSettings;
   if ("items" in body && Array.isArray(body.items)) {
-    return body
+    return body;
   }
   if ("id" in body) {
     return {
       items: [body],
       default_id: body.id,
       mode: "llm_assisted",
-    }
+    };
   }
-  return { items: [], default_id: null, mode: "deterministic" }
+  return { items: [], default_id: null, mode: "deterministic" };
 }
 
 export async function saveAgentLlmSettings({
@@ -467,13 +444,13 @@ export async function saveAgentLlmSettings({
   apiKey,
   isDefault,
 }: {
-  organizationId: string
-  settingId?: string
-  displayName: string
-  provider: AgentLlmSettings["provider"]
-  model: string
-  apiKey: string
-  isDefault: boolean
+  organizationId: string;
+  settingId?: string;
+  displayName: string;
+  provider: AgentLlmSettings["provider"];
+  model: string;
+  apiKey: string;
+  isDefault: boolean;
 }): Promise<AgentLlmSettings> {
   const response = await apiFetch(
     settingId
@@ -491,11 +468,11 @@ export async function saveAgentLlmSettings({
         is_default: isDefault,
       }),
     },
-  )
+  );
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not save AI settings."))
+    throw new Error(await errorMessage(response, "Could not save AI settings."));
   }
-  return response.json() as Promise<AgentLlmSettings>
+  return response.json() as Promise<AgentLlmSettings>;
 }
 
 export async function deleteAgentLlmSettings(
@@ -508,9 +485,9 @@ export async function deleteAgentLlmSettings(
       method: "DELETE",
       credentials: "include",
     },
-  )
+  );
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not remove AI settings."))
+    throw new Error(await errorMessage(response, "Could not remove AI settings."));
   }
 }
 
@@ -524,31 +501,27 @@ export async function setDefaultAgentLlmSettings(
       method: "POST",
       credentials: "include",
     },
-  )
+  );
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not set the default AI model."))
+    throw new Error(await errorMessage(response, "Could not set the default AI model."));
   }
-  return response.json() as Promise<AgentLlmSettings>
+  return response.json() as Promise<AgentLlmSettings>;
 }
 
-export async function sendSlackTestMessage(
-  organizationId: string,
-): Promise<SlackTestMessage> {
+export async function sendSlackTestMessage(organizationId: string): Promise<SlackTestMessage> {
   const response = await fetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/slack/test-message`,
     {
       method: "POST",
       credentials: "include",
     },
-  )
+  );
   if (!response.ok) {
-    throw new Error(
-      await errorMessage(response, "Could not send the Slack test message."),
-    )
+    throw new Error(await errorMessage(response, "Could not send the Slack test message."));
   }
-  return response.json() as Promise<SlackTestMessage>
+  return response.json() as Promise<SlackTestMessage>;
 }
 
 export function getLoginUrl(returnTo = `${window.location.origin}/`): string {
-  return `${apiBaseUrl}/v1/auth/github/start?return_to=${encodeURIComponent(returnTo)}`
+  return `${apiBaseUrl}/v1/auth/github/start?return_to=${encodeURIComponent(returnTo)}`;
 }

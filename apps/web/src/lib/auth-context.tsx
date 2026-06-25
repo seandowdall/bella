@@ -1,101 +1,98 @@
-"use client"
+"use client";
 
-import { Spinner } from "@/components/ui/spinner"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { createContext, useContext, useEffect, useState } from "react"
-import type { ReactNode } from "react"
-import { useRouter } from "next/navigation"
-import type { Organization, User } from "@/lib/dashboard-types"
+import { Spinner } from "@/components/ui/spinner";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { createContext, useContext, useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import type { Organization, User } from "@/lib/dashboard-types";
 import {
   getMe,
   getOrganizations,
   createOrganization as apiCreateOrganization,
   logout as apiLogout,
   getLoginUrl,
-} from "@/lib/api"
-import posthog from "posthog-js"
+} from "@/lib/api";
+import posthog from "posthog-js";
 
 type AuthContextValue = {
-  user: User
-  organizations: Organization[]
-  selectedOrganizationId: string
-  selectedOrganization: Organization | undefined
-  setSelectedOrganizationId: (id: string) => void
-  loading: boolean
-  error: string
-  setError: (error: string) => void
-  logout: () => Promise<void>
-  createOrganization: (name: string) => Promise<Organization>
-  login: () => void
-}
+  user: User;
+  organizations: Organization[];
+  selectedOrganizationId: string;
+  selectedOrganization: Organization | undefined;
+  setSelectedOrganizationId: (id: string) => void;
+  loading: boolean;
+  error: string;
+  setError: (error: string) => void;
+  logout: () => Promise<void>;
+  createOrganization: (name: string) => Promise<Organization>;
+  login: () => void;
+};
 
-const AuthContext = createContext<AuthContextValue | null>(null)
+const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const router = useRouter()
-  const [user, setUser] = useState<User | null>(null)
-  const [organizations, setOrganizations] = useState<Organization[]>([])
-  const [selectedOrganizationId, setSelectedOrganizationId] = useState("")
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
+  const router = useRouter();
+  const [user, setUser] = useState<User | null>(null);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     const load = async () => {
       try {
-        const authenticatedUser = await getMe()
+        const authenticatedUser = await getMe();
         if (!authenticatedUser) {
-          setUser(null)
-          return
+          setUser(null);
+          return;
         }
-        const orgs = await getOrganizations()
-        setUser(authenticatedUser)
-        setOrganizations(orgs)
-        setSelectedOrganizationId(orgs[0]?.id ?? "")
+        const orgs = await getOrganizations();
+        setUser(authenticatedUser);
+        setOrganizations(orgs);
+        setSelectedOrganizationId(orgs[0]?.id ?? "");
         posthog.identify(authenticatedUser.github_login, {
           name: authenticatedUser.name ?? authenticatedUser.github_login,
           github_login: authenticatedUser.github_login,
-        })
+        });
       } catch (e) {
-        setError(
-          e instanceof Error ? e.message : "Could not load the dashboard.",
-        )
+        setError(e instanceof Error ? e.message : "Could not load the dashboard.");
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
-    }
-    void load()
-  }, [])
+    };
+    void load();
+  }, []);
 
   const selectedOrganization =
-    organizations.find((o) => o.id === selectedOrganizationId) ??
-    organizations[0]
+    organizations.find((o) => o.id === selectedOrganizationId) ?? organizations[0];
 
   const handleLogout = async () => {
-    posthog.capture("logout_clicked")
-    await apiLogout()
-    posthog.reset()
-    setUser(null)
-    setOrganizations([])
-  }
+    posthog.capture("logout_clicked");
+    await apiLogout();
+    posthog.reset();
+    setUser(null);
+    setOrganizations([]);
+  };
 
   const handleCreateOrganization = async (name: string) => {
-    const org = await apiCreateOrganization(name)
-    setOrganizations((current) => [...current, org])
-    setSelectedOrganizationId(org.id)
-    return org
-  }
+    const org = await apiCreateOrganization(name);
+    setOrganizations((current) => [...current, org]);
+    setSelectedOrganizationId(org.id);
+    return org;
+  };
 
   const login = () => {
-    window.location.assign(getLoginUrl())
-  }
+    window.location.assign(getLoginUrl());
+  };
 
   useEffect(() => {
     if (!loading && !user) {
-      if (error) return
-      router.replace("/login")
+      if (error) return;
+      router.replace("/login");
     }
-  }, [error, loading, router, user])
+  }, [error, loading, router, user]);
 
   if (!user) {
     if (loading) {
@@ -106,7 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             Loading Bella
           </div>
         </main>
-      )
+      );
     }
     if (error) {
       return (
@@ -118,9 +115,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             <Button onClick={() => window.location.reload()}>Retry</Button>
           </div>
         </main>
-      )
+      );
     }
-    return null
+    return null;
   }
 
   return (
@@ -141,11 +138,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     >
       {children}
     </AuthContext.Provider>
-  )
+  );
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider")
-  return ctx
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  return ctx;
 }

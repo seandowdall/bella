@@ -12,12 +12,9 @@ const badgeVariants = cva(
       variant: {
         outline:
           "border-input text-muted-foreground hover:bg-accent hover:text-accent-foreground border bg-transparent",
-        secondary:
-          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        muted:
-          "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground",
-        ghost:
-          "text-muted-foreground hover:bg-accent hover:text-accent-foreground bg-transparent",
+        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        muted: "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground",
+        ghost: "text-muted-foreground hover:bg-accent hover:text-accent-foreground bg-transparent",
         info: "bg-blue-100 text-blue-700 hover:bg-blue-100/80 dark:bg-blue-900/50 dark:text-blue-300",
         warning:
           "bg-amber-100 text-amber-700 hover:bg-amber-100/80 dark:bg-amber-900/50 dark:text-amber-300",
@@ -44,13 +41,7 @@ export type BadgeProps = ComponentProps<"span"> &
     asChild?: boolean;
   };
 
-function Badge({
-  className,
-  variant,
-  size,
-  asChild = false,
-  ...props
-}: BadgeProps) {
+function Badge({ className, variant, size, asChild = false, ...props }: BadgeProps) {
   const Comp = asChild ? Slot.Root : "span";
 
   return (

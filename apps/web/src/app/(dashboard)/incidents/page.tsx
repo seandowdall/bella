@@ -1,26 +1,20 @@
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
-import Link from "next/link"
-import { AlertTriangleIcon, RefreshCwIcon } from "lucide-react"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { AlertTriangleIcon, RefreshCwIcon } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "@/components/ui/empty"
-import { Spinner } from "@/components/ui/spinner"
+} from "@/components/ui/empty";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -28,55 +22,55 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
-import { getIncidents } from "@/lib/api"
-import { useAuth } from "@/lib/auth-context"
-import type { IncidentListItem, IncidentSeverity } from "@/lib/dashboard-types"
+} from "@/components/ui/table";
+import { getIncidents } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import type { IncidentListItem, IncidentSeverity } from "@/lib/dashboard-types";
 
 export default function IncidentsPage() {
-  const { selectedOrganizationId } = useAuth()
-  const [incidents, setIncidents] = useState<IncidentListItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
+  const { selectedOrganizationId } = useAuth();
+  const [incidents, setIncidents] = useState<IncidentListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   const loadIncidents = async () => {
-    if (!selectedOrganizationId) return
-    setLoading(true)
-    setError("")
+    if (!selectedOrganizationId) return;
+    setLoading(true);
+    setError("");
     try {
-      setIncidents(await getIncidents(selectedOrganizationId))
+      setIncidents(await getIncidents(selectedOrganizationId));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load incidents.")
+      setError(e instanceof Error ? e.message : "Could not load incidents.");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    if (!selectedOrganizationId) return
-    const organizationId = selectedOrganizationId
-    let cancelled = false
+    if (!selectedOrganizationId) return;
+    const organizationId = selectedOrganizationId;
+    let cancelled = false;
 
     const load = async () => {
-      setError("")
+      setError("");
       try {
-        const nextIncidents = await getIncidents(organizationId)
-        if (!cancelled) setIncidents(nextIncidents)
+        const nextIncidents = await getIncidents(organizationId);
+        if (!cancelled) setIncidents(nextIncidents);
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Could not load incidents.")
+          setError(e instanceof Error ? e.message : "Could not load incidents.");
         }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) setLoading(false);
       }
-    }
+    };
 
-    void load()
+    void load();
 
     return () => {
-      cancelled = true
-    }
-  }, [selectedOrganizationId])
+      cancelled = true;
+    };
+  }, [selectedOrganizationId]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -107,8 +101,8 @@ export default function IncidentsPage() {
         <CardHeader>
           <CardTitle>Recent incidents</CardTitle>
           <CardDescription>
-            The first read model for PostHog ingestion. Slack, agent runs, and
-            GitHub remediation will attach to these records next.
+            The first read model for PostHog ingestion. Slack, agent runs, and GitHub remediation
+            will attach to these records next.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -162,8 +156,7 @@ export default function IncidentsPage() {
                 </EmptyMedia>
                 <EmptyTitle>No incidents yet</EmptyTitle>
                 <EmptyDescription>
-                  Send a PostHog error tracking webhook to start building the
-                  incident timeline.
+                  Send a PostHog error tracking webhook to start building the incident timeline.
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
@@ -171,7 +164,7 @@ export default function IncidentsPage() {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }
 
 function SeverityBadge({ severity }: { severity: IncidentSeverity }) {
@@ -180,12 +173,12 @@ function SeverityBadge({ severity }: { severity: IncidentSeverity }) {
       ? "destructive"
       : severity === "unknown"
         ? "outline"
-        : "secondary"
-  return <Badge variant={variant}>{formatLabel(severity)}</Badge>
+        : "secondary";
+  return <Badge variant={variant}>{formatLabel(severity)}</Badge>;
 }
 
 function formatLabel(value: string) {
-  return value.replaceAll("_", " ")
+  return value.replaceAll("_", " ");
 }
 
 function formatDate(value: string) {
@@ -194,5 +187,5 @@ function formatDate(value: string) {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value))
+  }).format(new Date(value));
 }
