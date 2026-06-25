@@ -9,6 +9,9 @@ import type {
   PosthogConnection,
   ProviderAccount,
   ProviderDefinition,
+  OrganizationMember,
+  OrganizationMembers,
+  OrganizationRole,
   SyncOutcome,
   SlackTestMessage,
   UsageSummary,
@@ -75,6 +78,109 @@ export async function createOrganization(
   const body = await response.json()
   if (!response.ok) throw new Error(body.error ?? "Could not create the organization.")
   return body as Organization
+}
+
+export async function getOrganizationMembers(
+  organizationId: string,
+): Promise<OrganizationMembers> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/members`,
+    { credentials: "include" },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not load organization members."))
+  }
+  return response.json() as Promise<OrganizationMembers>
+}
+
+export async function inviteOrganizationMember({
+  organizationId,
+  email,
+  role,
+}: {
+  organizationId: string
+  email: string
+  role: "admin" | "member"
+}) {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/invitations`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, role }),
+      timeoutMs: 10_000,
+    },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not send the invitation."))
+  }
+  return response.json()
+}
+
+export async function revokeOrganizationInvitation(
+  organizationId: string,
+  invitationId: string,
+): Promise<void> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/invitations/${invitationId}`,
+    { method: "DELETE", credentials: "include" },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not revoke the invitation."))
+  }
+}
+
+export async function acceptOrganizationInvitation(
+  token: string,
+): Promise<Organization> {
+  const response = await apiFetch(`${apiBaseUrl}/v1/invitations/accept`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  })
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not accept the invitation."))
+  }
+  return response.json() as Promise<Organization>
+}
+
+export async function updateOrganizationMemberRole({
+  organizationId,
+  userId,
+  role,
+}: {
+  organizationId: string
+  userId: string
+  role: Exclude<OrganizationRole, "owner">
+}): Promise<OrganizationMember> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/members/${userId}`,
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not update member role."))
+  }
+  return response.json() as Promise<OrganizationMember>
+}
+
+export async function removeOrganizationMember(
+  organizationId: string,
+  userId: string,
+): Promise<void> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/members/${userId}`,
+    { method: "DELETE", credentials: "include" },
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not remove member."))
+  }
 }
 
 export async function logout(): Promise<void> {
@@ -443,7 +549,6 @@ export async function sendSlackTestMessage(
   return response.json() as Promise<SlackTestMessage>
 }
 
-export function getLoginUrl(): string {
-  const returnTo = `${window.location.origin}/`
+export function getLoginUrl(returnTo = `${window.location.origin}/`): string {
   return `${apiBaseUrl}/v1/auth/github/start?return_to=${encodeURIComponent(returnTo)}`
 }

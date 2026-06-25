@@ -23,6 +23,7 @@ const OAUTH_BROWSER_COOKIE: &str = "bella_oauth_browser";
 pub struct AuthUser {
     pub(crate) id: Uuid,
     pub(crate) github_login: String,
+    pub(crate) primary_email: Option<String>,
     name: Option<String>,
     avatar_url: Option<String>,
 }
@@ -143,9 +144,13 @@ pub async fn callback(
         }
     }
     let github_identity = fetch_github_identity(&state, &query.code).await?;
-    authorize_github_email(&state, github_identity.primary_email.as_deref())?;
-    let user = upsert_user(&state, github_identity.user).await?;
-    crate::organizations::ensure_default_organization(&state, &user).await?;
+    let can_self_onboard =
+        github_email_allowed_by_config(&state, github_identity.primary_email.as_deref());
+    authorize_github_email(&state, github_identity.primary_email.as_deref()).await?;
+    let user = upsert_user(&state, github_identity.user, github_identity.primary_email).await?;
+    if can_self_onboard {
+        crate::organizations::ensure_default_organization(&state, &user).await?;
+    }
 
     match flow.flow_kind.as_str() {
         "web" => {
@@ -438,38 +443,72 @@ async fn fetch_github_identity(state: &AppState, code: &str) -> Result<GithubIde
     })
 }
 
-fn authorize_github_email(state: &AppState, email: Option<&str>) -> Result<(), AuthError> {
-    if state.config.github_allowed_emails.is_empty() {
+async fn authorize_github_email(state: &AppState, email: Option<&str>) -> Result<(), AuthError> {
+    if github_email_allowed_by_config(state, email) {
         return Ok(());
     }
 
     let email = email.ok_or(AuthError::Forbidden)?;
-    if state
-        .config
-        .github_allowed_emails
-        .iter()
-        .any(|allowed| allowed == email)
-    {
+
+    if email_has_organization_access(state, email).await? {
         Ok(())
     } else {
         Err(AuthError::Forbidden)
     }
 }
 
-async fn upsert_user(state: &AppState, github: GithubUser) -> Result<AuthUser, AuthError> {
+pub(crate) fn github_email_allowed_by_config(state: &AppState, email: Option<&str>) -> bool {
+    state.config.github_allowed_emails.is_empty()
+        || email.is_some_and(|email| {
+            state
+                .config
+                .github_allowed_emails
+                .iter()
+                .any(|allowed| allowed == email)
+        })
+}
+
+async fn email_has_organization_access(state: &AppState, email: &str) -> Result<bool, AuthError> {
+    Ok(sqlx::query(
+        "select 1
+         from organization_memberships m
+         join users u on u.id = m.user_id
+         where lower(u.primary_email) = $1
+         union
+         select 1
+         from organization_invitations
+         where email = $1
+           and accepted_at is null
+           and revoked_at is null
+           and expires_at > now()
+         limit 1",
+    )
+    .bind(email)
+    .fetch_optional(&state.db)
+    .await?
+    .is_some())
+}
+
+async fn upsert_user(
+    state: &AppState,
+    github: GithubUser,
+    primary_email: Option<String>,
+) -> Result<AuthUser, AuthError> {
     let row = sqlx::query(
-        "insert into users (id, github_user_id, github_login, name, avatar_url)
-         values ($1, $2, $3, $4, $5)
+        "insert into users (id, github_user_id, github_login, primary_email, name, avatar_url)
+         values ($1, $2, $3, $4, $5, $6)
          on conflict (github_user_id) do update
          set github_login = excluded.github_login,
+             primary_email = excluded.primary_email,
              name = excluded.name,
              avatar_url = excluded.avatar_url,
              updated_at = now()
-         returning id, github_login, name, avatar_url",
+         returning id, github_login, primary_email, name, avatar_url",
     )
     .bind(Uuid::new_v4())
     .bind(github.id)
     .bind(github.login)
+    .bind(primary_email)
     .bind(github.name)
     .bind(github.avatar_url)
     .fetch_one(&state.db)
@@ -480,7 +519,7 @@ async fn upsert_user(state: &AppState, github: GithubUser) -> Result<AuthUser, A
 async fn find_user_by_token(state: &AppState, token: &str) -> Result<AuthUser, AuthError> {
     let token_hash = hash_token(token);
     let row = sqlx::query(
-        "select u.id, u.github_login, u.name, u.avatar_url
+        "select u.id, u.github_login, u.primary_email, u.name, u.avatar_url
          from users u
          left join web_sessions s
            on s.user_id = u.id and s.token_hash = $1 and s.expires_at > now()
@@ -501,10 +540,12 @@ async fn find_user_by_token(state: &AppState, token: &str) -> Result<AuthUser, A
 }
 
 async fn find_user_by_id(state: &AppState, user_id: Uuid) -> Result<AuthUser, AuthError> {
-    let row = sqlx::query("select id, github_login, name, avatar_url from users where id = $1")
-        .bind(user_id)
-        .fetch_one(&state.db)
-        .await?;
+    let row = sqlx::query(
+        "select id, github_login, primary_email, name, avatar_url from users where id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await?;
     user_from_row(&row)
 }
 
@@ -527,6 +568,7 @@ fn user_from_row(row: &sqlx::postgres::PgRow) -> Result<AuthUser, AuthError> {
     Ok(AuthUser {
         id: row.try_get("id")?,
         github_login: row.try_get("github_login")?,
+        primary_email: row.try_get("primary_email")?,
         name: row.try_get("name")?,
         avatar_url: row.try_get("avatar_url")?,
     })

@@ -205,6 +205,34 @@ fn rate_limit_policy(method: &Method, path: &str) -> Option<RateLimitPolicy> {
             window: Duration::from_secs(300),
         });
     }
+    if method == Method::POST && path.ends_with("/invitations") {
+        return Some(RateLimitPolicy {
+            name: "organization_invitation_write",
+            limit: 10,
+            window: Duration::from_secs(300),
+        });
+    }
+    if method == Method::POST && path == "/v1/invitations/accept" {
+        return Some(RateLimitPolicy {
+            name: "organization_invitation_accept",
+            limit: 30,
+            window: Duration::from_secs(300),
+        });
+    }
+    if method == Method::DELETE && path.contains("/invitations/") {
+        return Some(RateLimitPolicy {
+            name: "organization_invitation_revoke",
+            limit: 60,
+            window: Duration::from_secs(300),
+        });
+    }
+    if (method == Method::PATCH || method == Method::DELETE) && path.contains("/members/") {
+        return Some(RateLimitPolicy {
+            name: "organization_member_write",
+            limit: 60,
+            window: Duration::from_secs(300),
+        });
+    }
     if method == Method::POST && path.ends_with("/sdk/usage-events") {
         return Some(RateLimitPolicy {
             name: "sdk_ingestion",
@@ -288,6 +316,14 @@ mod tests {
             )
             .is_some()
         );
+        assert!(
+            rate_limit_policy(
+                &Method::POST,
+                "/v1/organizations/00000000-0000-0000-0000-000000000000/invitations"
+            )
+            .is_some()
+        );
+        assert!(rate_limit_policy(&Method::POST, "/v1/invitations/accept").is_some());
         assert!(rate_limit_policy(&Method::GET, "/v1/providers").is_none());
     }
 }

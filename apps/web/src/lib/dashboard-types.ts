@@ -19,6 +19,33 @@ export type Organization = {
   default_workspace: Workspace
 }
 
+export type OrganizationRole = Organization['role']
+
+export type OrganizationMember = {
+  user_id: string
+  github_login: string
+  name: string | null
+  avatar_url: string | null
+  primary_email: string | null
+  role: OrganizationRole
+  created_at: string
+}
+
+export type OrganizationInvitation = {
+  id: string
+  email: string
+  role: 'admin' | 'member'
+  status: 'pending' | 'expired' | 'revoked'
+  invited_by_github_login: string
+  expires_at: string
+  created_at: string
+}
+
+export type OrganizationMembers = {
+  members: OrganizationMember[]
+  invitations: OrganizationInvitation[]
+}
+
 export type ProviderDefinition = {
   id: string
   name: string
