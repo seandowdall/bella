@@ -1,6 +1,7 @@
 export type User = {
   id: string
   github_login: string
+  primary_email: string | null
   name: string | null
   avatar_url: string | null
 }

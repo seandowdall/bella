@@ -35,6 +35,7 @@ export default function InvitePage() {
   const [checkingAuth, setCheckingAuth] = useState(true)
   const [accepting, setAccepting] = useState(false)
   const [authenticated, setAuthenticated] = useState(false)
+  const [needsEmailRefresh, setNeedsEmailRefresh] = useState(false)
   const [organization, setOrganization] = useState<Organization>()
   const [token, setToken] = useState("")
   const [error, setError] = useState("")
@@ -55,6 +56,7 @@ export default function InvitePage() {
       }
       const user = await getMe()
       setAuthenticated(Boolean(user))
+      setNeedsEmailRefresh(Boolean(user && !user.primary_email))
       setCheckingAuth(false)
     }
     void load()
@@ -70,7 +72,16 @@ export default function InvitePage() {
       setOrganization(nextOrganization)
       router.refresh()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not accept the invitation.")
+      const message =
+        e instanceof Error ? e.message : "Could not accept the invitation."
+      if (message.includes("verified primary email")) {
+        setNeedsEmailRefresh(true)
+        setError(
+          "Bella needs to refresh your verified GitHub email before accepting this invitation.",
+        )
+      } else {
+        setError(message)
+      }
     } finally {
       setAccepting(false)
     }
@@ -111,6 +122,23 @@ export default function InvitePage() {
               </Alert>
               <Button asChild>
                 <Link href="/settings/organization">Open organization settings</Link>
+              </Button>
+            </>
+          ) : authenticated && needsEmailRefresh ? (
+            <>
+              <Alert>
+                <AlertDescription>
+                  Bella needs to refresh your verified GitHub email before
+                  accepting this invitation.
+                </AlertDescription>
+              </Alert>
+              {error && (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+              <Button onClick={login} disabled={!token}>
+                Reconnect GitHub
               </Button>
             </>
           ) : authenticated ? (
