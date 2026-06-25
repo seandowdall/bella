@@ -205,6 +205,13 @@ fn rate_limit_policy(method: &Method, path: &str) -> Option<RateLimitPolicy> {
             window: Duration::from_secs(300),
         });
     }
+    if method == Method::POST && path.ends_with("/integrations/slack/install-url") {
+        return Some(RateLimitPolicy {
+            name: "integration_write",
+            limit: 20,
+            window: Duration::from_secs(300),
+        });
+    }
     if method == Method::POST && path.ends_with("/sdk/usage-events") {
         return Some(RateLimitPolicy {
             name: "sdk_ingestion",

@@ -381,6 +381,10 @@ async fn main() -> anyhow::Result<()> {
             "/v1/organizations/:organization_id/integrations/slack/test-message",
             post(slack::send_test_message),
         )
+        .route(
+            "/v1/organizations/:organization_id/integrations/slack/install-url",
+            post(slack::install_url),
+        )
         .layer(cors)
         .layer(middleware::from_fn_with_state(
             app_state.clone(),

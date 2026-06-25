@@ -5,14 +5,73 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::cookie::CookieJar;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bella_slack::{PostedMessage, SlackClientError};
+use chrono::{Duration as ChronoDuration, Utc};
+use rand::{RngCore, rngs::OsRng};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::Row;
 use uuid::Uuid;
 
 use crate::{
-    AppState,
+    AppState, SlackCloudConfig,
     auth::{AuthError, authenticated_user},
 };
+
+const SLACK_OAUTH_SCOPE: &str = "chat:write,channels:read,groups:read";
+const SLACK_OAUTH_STATE_TTL_MINUTES: i64 = 10;
+
+#[derive(Debug, Deserialize)]
+pub struct InstallUrlRequest {
+    return_to: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InstallUrlResponse {
+    install_url: String,
+    expires_in: i64,
+}
+
+pub async fn install_url(
+    State(state): State<AppState>,
+    Path(organization_id): Path<Uuid>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    request: Option<Json<InstallUrlRequest>>,
+) -> Result<Json<InstallUrlResponse>, SlackError> {
+    let user = authenticated_user(&state, &jar, &headers).await?;
+    require_admin_membership(&state, user.id, organization_id).await?;
+    let slack_cloud = state
+        .config
+        .slack_cloud
+        .as_ref()
+        .ok_or(SlackError::CloudNotConfigured)?;
+    cleanup_expired_slack_oauth_states(&state).await?;
+
+    let oauth_state = random_token();
+    let expires_in = SLACK_OAUTH_STATE_TTL_MINUTES * 60;
+    let return_to = request
+        .and_then(|Json(request)| request.return_to)
+        .filter(|value| is_safe_return_to(value, &state.config.web_url));
+    sqlx::query(
+        "insert into slack_oauth_states
+         (state_hash, organization_id, user_id, return_to, expires_at)
+         values ($1, $2, $3, $4, $5)",
+    )
+    .bind(hash_token(&oauth_state))
+    .bind(organization_id)
+    .bind(user.id)
+    .bind(return_to)
+    .bind(Utc::now() + ChronoDuration::minutes(SLACK_OAUTH_STATE_TTL_MINUTES))
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(InstallUrlResponse {
+        install_url: build_slack_install_url(slack_cloud, &oauth_state)?,
+        expires_in,
+    }))
+}
 
 pub async fn send_test_message(
     State(state): State<AppState>,
@@ -31,6 +90,49 @@ pub async fn send_test_message(
     }
 
     Ok(Json(slack_client.post_test_message().await?))
+}
+
+fn build_slack_install_url(
+    config: &SlackCloudConfig,
+    oauth_state: &str,
+) -> Result<String, SlackError> {
+    let mut url = reqwest::Url::parse("https://slack.com/oauth/v2/authorize")
+        .map_err(|_| SlackError::Configuration)?;
+    url.query_pairs_mut()
+        .append_pair("client_id", &config.client_id)
+        .append_pair("scope", SLACK_OAUTH_SCOPE)
+        .append_pair("redirect_uri", &config.redirect_uri)
+        .append_pair("state", oauth_state);
+    Ok(url.to_string())
+}
+
+async fn cleanup_expired_slack_oauth_states(state: &AppState) -> Result<(), SlackError> {
+    sqlx::query("delete from slack_oauth_states where expires_at <= now()")
+        .execute(&state.db)
+        .await?;
+    Ok(())
+}
+
+fn random_token() -> String {
+    let mut bytes = [0_u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn hash_token(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn is_safe_return_to(value: &str, web_url: &str) -> bool {
+    let Ok(return_to) = reqwest::Url::parse(value) else {
+        return false;
+    };
+    let Ok(web) = reqwest::Url::parse(web_url) else {
+        return false;
+    };
+    return_to.origin() == web.origin()
 }
 
 async fn require_admin_membership(
@@ -58,6 +160,8 @@ async fn require_admin_membership(
 pub enum SlackError {
     Auth(AuthError),
     Client(SlackClientError),
+    Configuration,
+    CloudNotConfigured,
     Database(sqlx::Error),
     Forbidden,
     NotConfigured,
@@ -100,6 +204,18 @@ impl IntoResponse for SlackError {
             Self::NotConfigured => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "Slack integration is not configured" })),
+            )
+                .into_response(),
+            Self::CloudNotConfigured => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "Slack Cloud installation is not configured"
+                })),
+            )
+                .into_response(),
+            Self::Configuration => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Slack integration is misconfigured" })),
             )
                 .into_response(),
             Self::NotConfiguredForOrganization => (
@@ -162,5 +278,65 @@ impl IntoResponse for SlackError {
                     .into_response()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SLACK_OAUTH_SCOPE, build_slack_install_url, is_safe_return_to};
+    use crate::SlackCloudConfig;
+
+    #[test]
+    fn builds_slack_install_url_with_minimal_bot_scopes() {
+        let config = SlackCloudConfig::from_values(
+            Some("123.abc".to_owned()),
+            Some("client-secret".to_owned()),
+            Some("signing-secret".to_owned()),
+            Some("https://api.bella.example/v1/slack/oauth/callback".to_owned()),
+        )
+        .unwrap()
+        .unwrap();
+
+        let install_url = build_slack_install_url(&config, "state-token").unwrap();
+        let url = reqwest::Url::parse(&install_url).unwrap();
+        let pairs = url.query_pairs().collect::<Vec<_>>();
+
+        assert_eq!(
+            url.as_str().split('?').next().unwrap(),
+            "https://slack.com/oauth/v2/authorize"
+        );
+        assert!(
+            pairs
+                .iter()
+                .any(|(key, value)| key == "client_id" && value == "123.abc")
+        );
+        assert!(
+            pairs
+                .iter()
+                .any(|(key, value)| key == "scope" && value == SLACK_OAUTH_SCOPE)
+        );
+        assert!(pairs.iter().any(|(key, value)| key == "redirect_uri"
+            && value == "https://api.bella.example/v1/slack/oauth/callback"));
+        assert!(
+            pairs
+                .iter()
+                .any(|(key, value)| key == "state" && value == "state-token")
+        );
+    }
+
+    #[test]
+    fn accepts_return_urls_only_on_web_origin() {
+        assert!(is_safe_return_to(
+            "https://app.bella.example/settings/integrations",
+            "https://app.bella.example"
+        ));
+        assert!(!is_safe_return_to(
+            "https://evil.example/settings/integrations",
+            "https://app.bella.example"
+        ));
+        assert!(!is_safe_return_to(
+            "/settings/integrations",
+            "https://app.bella.example"
+        ));
     }
 }
