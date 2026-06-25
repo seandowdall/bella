@@ -79,17 +79,10 @@ type CategoriesProps = {
   emptyLabel: string;
 };
 
-const Categories: FC<CategoriesProps> = ({
-  iconMap,
-  fallbackIcon,
-  emptyLabel,
-}) => (
+const Categories: FC<CategoriesProps> = ({ iconMap, fallbackIcon, emptyLabel }) => (
   <ComposerPrimitive.Unstable_TriggerPopoverCategories>
     {(categories) => (
-      <div
-        data-slot="composer-trigger-popover-categories"
-        className="flex flex-col py-1"
-      >
+      <div data-slot="composer-trigger-popover-categories" className="flex flex-col py-1">
         {categories.map((cat) => {
           const Icon = resolveIcon(cat.id, iconMap, fallbackIcon);
           return (
@@ -107,9 +100,7 @@ const Categories: FC<CategoriesProps> = ({
           );
         })}
         {categories.length === 0 && (
-          <div className="text-muted-foreground px-3 py-2 text-sm">
-            {emptyLabel}
-          </div>
+          <div className="text-muted-foreground px-3 py-2 text-sm">{emptyLabel}</div>
         )}
       </div>
     )}
@@ -124,21 +115,12 @@ type ItemsProps = {
   loadingLabel: string;
 };
 
-const Items: FC<ItemsProps> = ({
-  iconMap,
-  fallbackIcon,
-  backLabel,
-  emptyLabel,
-  loadingLabel,
-}) => {
+const Items: FC<ItemsProps> = ({ iconMap, fallbackIcon, backLabel, emptyLabel, loadingLabel }) => {
   const { isLoading } = unstable_useTriggerPopoverScopeContext();
   return (
     <ComposerPrimitive.Unstable_TriggerPopoverItems>
       {(items) => (
-        <div
-          data-slot="composer-trigger-popover-items"
-          className="flex flex-col"
-        >
+        <div data-slot="composer-trigger-popover-items" className="flex flex-col">
           <ComposerPrimitive.Unstable_TriggerPopoverBack className="text-muted-foreground hover:bg-accent flex cursor-pointer items-center gap-1.5 border-b px-3 py-2 text-xs tracking-wide uppercase transition-colors">
             <ChevronLeftIcon className="size-3.5" />
             {backLabel}
@@ -147,9 +129,7 @@ const Items: FC<ItemsProps> = ({
           <div className="py-1">
             {items.map((item, index) => {
               const iconKey =
-                typeof item.metadata?.icon === "string"
-                  ? item.metadata.icon
-                  : undefined;
+                typeof item.metadata?.icon === "string" ? item.metadata.icon : undefined;
               const Icon = resolveIcon(iconKey, iconMap, fallbackIcon);
               return (
                 <ComposerPrimitive.Unstable_TriggerPopoverItem
@@ -219,11 +199,7 @@ const ComposerTriggerPopoverImpl: FC<ComposerTriggerPopoverProps> = ({
           removeOnExecute={action.removeOnExecute}
         />
       ) : null}
-      <Categories
-        iconMap={iconMap}
-        fallbackIcon={fallbackIcon}
-        emptyLabel={emptyCategoriesLabel}
-      />
+      <Categories iconMap={iconMap} fallbackIcon={fallbackIcon} emptyLabel={emptyCategoriesLabel} />
       <Items
         iconMap={iconMap}
         fallbackIcon={fallbackIcon}

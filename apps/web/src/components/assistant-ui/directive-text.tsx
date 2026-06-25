@@ -65,9 +65,7 @@ export function createDirectiveText(
   return Component;
 }
 
-const DirectiveTextImpl = createDirectiveText(
-  unstable_defaultDirectiveFormatter,
-);
+const DirectiveTextImpl = createDirectiveText(unstable_defaultDirectiveFormatter);
 
 /** `Text` message part component that renders directive syntax as inline chips. */
 export const DirectiveText: TextMessagePartComponent = memo(DirectiveTextImpl);

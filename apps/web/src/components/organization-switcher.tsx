@@ -1,10 +1,6 @@
-"use client"
+"use client";
 
-import {
-  Building2Icon,
-  ChevronsUpDownIcon,
-  PlusIcon,
-} from "lucide-react"
+import { Building2Icon, ChevronsUpDownIcon, PlusIcon } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,21 +9,21 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "@/components/ui/dropdown-menu";
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
-} from "@/components/ui/sidebar"
-import type { Organization } from "@/lib/dashboard-types"
+} from "@/components/ui/sidebar";
+import type { Organization } from "@/lib/dashboard-types";
 
 type OrganizationSwitcherProps = {
-  organizations: Organization[]
-  selectedOrganizationId: string
-  onOrganizationChange: (organizationId: string) => void
-  onCreateOrganization: () => void
-}
+  organizations: Organization[];
+  selectedOrganizationId: string;
+  onOrganizationChange: (organizationId: string) => void;
+  onCreateOrganization: () => void;
+};
 
 export function OrganizationSwitcher({
   organizations,
@@ -35,10 +31,10 @@ export function OrganizationSwitcher({
   onOrganizationChange,
   onCreateOrganization,
 }: OrganizationSwitcherProps) {
-  const { isMobile } = useSidebar()
+  const { isMobile } = useSidebar();
   const activeOrganization = organizations.find(
-    (organization) => organization.id === selectedOrganizationId
-  )
+    (organization) => organization.id === selectedOrganizationId,
+  );
 
   return (
     <SidebarMenu>
@@ -89,14 +85,12 @@ export function OrganizationSwitcher({
                 <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
                   <PlusIcon />
                 </div>
-                <span className="font-medium text-muted-foreground">
-                  New organization
-                </span>
+                <span className="font-medium text-muted-foreground">New organization</span>
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
     </SidebarMenu>
-  )
+  );
 }

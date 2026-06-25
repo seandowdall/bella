@@ -1,13 +1,10 @@
-"use client"
+"use client";
 
-import {
-  ProfileSettings,
-  SettingsPageHeader,
-} from "@/components/settings-sections"
-import { useAuth } from "@/lib/auth-context"
+import { ProfileSettings, SettingsPageHeader } from "@/components/settings-sections";
+import { useAuth } from "@/lib/auth-context";
 
 export default function SettingsProfilePage() {
-  const { user } = useAuth()
+  const { user } = useAuth();
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
@@ -17,5 +14,5 @@ export default function SettingsProfilePage() {
       />
       <ProfileSettings user={user} />
     </div>
-  )
+  );
 }

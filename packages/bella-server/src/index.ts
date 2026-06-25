@@ -96,7 +96,10 @@ export class BellaServer extends BellaClient {
         startedAt,
         endedAt: new Date(),
         metadata: options.metadata,
-        errorMessage: errorMessageFrom(error, options.captureErrorMessage ?? this.captureErrorMessage),
+        errorMessage: errorMessageFrom(
+          error,
+          options.captureErrorMessage ?? this.captureErrorMessage,
+        ),
       });
       throw error;
     }
@@ -141,8 +144,10 @@ function usageFromResult(value: unknown): BellaUsage | undefined {
     return undefined;
   }
   return {
-    inputTokens: numberField(value.usage, "input_tokens") ?? numberField(value.usage, "prompt_tokens"),
-    outputTokens: numberField(value.usage, "output_tokens") ?? numberField(value.usage, "completion_tokens"),
+    inputTokens:
+      numberField(value.usage, "input_tokens") ?? numberField(value.usage, "prompt_tokens"),
+    outputTokens:
+      numberField(value.usage, "output_tokens") ?? numberField(value.usage, "completion_tokens"),
     totalTokens: numberField(value.usage, "total_tokens"),
   };
 }

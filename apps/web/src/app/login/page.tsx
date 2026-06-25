@@ -1,7 +1,7 @@
-import { GalleryVerticalEnd } from "lucide-react"
-import Link from "next/link"
+import { GalleryVerticalEnd } from "lucide-react";
+import Link from "next/link";
 
-import { LoginForm } from "@/components/login-form"
+import { LoginForm } from "@/components/login-form";
 
 export default function LoginPage() {
   return (
@@ -16,5 +16,5 @@ export default function LoginPage() {
         <LoginForm />
       </div>
     </div>
-  )
+  );
 }

@@ -1,35 +1,28 @@
-"use client"
+"use client";
 
-import { createContext, useContext, useState } from "react"
+import { createContext, useContext, useState } from "react";
 
 type ProviderDialogContextValue = {
-  open: boolean
-  setOpen: (open: boolean) => void
-}
+  open: boolean;
+  setOpen: (open: boolean) => void;
+};
 
-const ProviderDialogContext =
-  createContext<ProviderDialogContextValue | null>(null)
+const ProviderDialogContext = createContext<ProviderDialogContextValue | null>(null);
 
-export function ProviderDialogProvider({
-  children,
-}: {
-  children: React.ReactNode
-}) {
-  const [open, setOpen] = useState(false)
+export function ProviderDialogProvider({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
 
   return (
     <ProviderDialogContext.Provider value={{ open, setOpen }}>
       {children}
     </ProviderDialogContext.Provider>
-  )
+  );
 }
 
 export function useProviderDialog() {
-  const context = useContext(ProviderDialogContext)
+  const context = useContext(ProviderDialogContext);
   if (!context) {
-    throw new Error(
-      "useProviderDialog must be used within ProviderDialogProvider",
-    )
+    throw new Error("useProviderDialog must be used within ProviderDialogProvider");
   }
-  return context
+  return context;
 }

@@ -1,0 +1,7 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "plugins": ["oxc", "prettier"],
+  "prettier": {
+    "printWidth": 100
+  }
+}
