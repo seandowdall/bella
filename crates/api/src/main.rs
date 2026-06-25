@@ -384,6 +384,10 @@ async fn main() -> anyhow::Result<()> {
             post(slack::send_test_message),
         )
         .route(
+            "/v1/organizations/:organization_id/integrations/slack",
+            get(slack::status),
+        )
+        .route(
             "/v1/organizations/:organization_id/integrations/slack/install-url",
             post(slack::install_url),
         )

@@ -116,6 +116,35 @@ export type SlackTestMessage = {
   message_ts: string
 }
 
+export type SlackWorkspaceStatus = {
+  team_id: string
+  team_name: string
+  status: 'connected' | 'needs_attention' | 'disabled' | 'uninstalled'
+  status_reason: string | null
+  installed_at: string
+}
+
+export type SlackChannelStatus = {
+  id: string
+  channel_id: string
+  channel_name: string | null
+  channel_type: 'public_channel' | 'private_channel'
+  status: 'active' | 'needs_attention' | 'disabled' | 'archived'
+  discovered_by: 'event' | 'refresh' | 'oauth' | 'manual'
+  last_seen_at: string
+}
+
+export type SlackStatus = {
+  installed: boolean
+  workspace: SlackWorkspaceStatus | null
+  channels: SlackChannelStatus[]
+}
+
+export type SlackInstallUrl = {
+  install_url: string
+  expires_in: number
+}
+
 
 export type IncidentStatus =
   | 'triaging'

@@ -1,7 +1,13 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { CheckIcon, CopyIcon, ExternalLinkIcon, RotateCcwIcon } from "lucide-react"
+import {
+  CheckIcon,
+  CopyIcon,
+  ExternalLinkIcon,
+  MessageSquareIcon,
+  RotateCcwIcon,
+} from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,9 +27,18 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
-import { connectPosthogIntegration, getIntegrations } from "@/lib/api"
+import {
+  connectPosthogIntegration,
+  createSlackInstallUrl,
+  getIntegrations,
+  getSlackStatus,
+} from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
-import type { Integration, PosthogConnection } from "@/lib/dashboard-types"
+import type {
+  Integration,
+  PosthogConnection,
+  SlackStatus,
+} from "@/lib/dashboard-types"
 
 const publicApiUrl =
   process.env.NEXT_PUBLIC_BELLA_PUBLIC_API_URL ?? "http://127.0.0.1:3000"
@@ -31,8 +46,10 @@ const publicApiUrl =
 export default function IntegrationsPage() {
   const { selectedOrganizationId } = useAuth()
   const [integrations, setIntegrations] = useState<Integration[]>([])
+  const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null)
   const [connection, setConnection] = useState<PosthogConnection | null>(null)
   const [loading, setLoading] = useState(true)
+  const [installingSlack, setInstallingSlack] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState("")
   const [copied, setCopied] = useState("")
@@ -51,8 +68,14 @@ export default function IntegrationsPage() {
     const load = async () => {
       setError("")
       try {
-        const nextIntegrations = await getIntegrations(selectedOrganizationId)
-        if (!cancelled) setIntegrations(nextIntegrations)
+        const [nextIntegrations, nextSlackStatus] = await Promise.all([
+          getIntegrations(selectedOrganizationId),
+          getSlackStatus(selectedOrganizationId),
+        ])
+        if (!cancelled) {
+          setIntegrations(nextIntegrations)
+          setSlackStatus(nextSlackStatus)
+        }
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Could not load integrations.")
@@ -87,6 +110,22 @@ export default function IntegrationsPage() {
     }
   }
 
+  const installSlack = async () => {
+    if (!selectedOrganizationId) return
+    setInstallingSlack(true)
+    setError("")
+    try {
+      const result = await createSlackInstallUrl({
+        organizationId: selectedOrganizationId,
+        returnTo: window.location.href,
+      })
+      window.location.assign(result.install_url)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start Slack install.")
+      setInstallingSlack(false)
+    }
+  }
+
   const copy = async (label: string, value: string) => {
     await navigator.clipboard.writeText(value)
     setCopied(label)
@@ -107,6 +146,136 @@ export default function IntegrationsPage() {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex flex-col gap-1">
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquareIcon />
+                Slack
+              </CardTitle>
+              <CardDescription>
+                Route new incident threads to the Slack channels where Bella is
+                invited.
+              </CardDescription>
+            </div>
+            <Badge variant={slackStatus?.installed ? "secondary" : "outline"}>
+              {slackStatus?.installed ? "Installed" : "Not installed"}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Spinner />
+              Loading Slack
+            </div>
+          ) : slackStatus?.installed ? (
+            <>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="slack-workspace">Workspace</FieldLabel>
+                  <Input
+                    id="slack-workspace"
+                    value={`${slackStatus.workspace?.team_name ?? "Slack workspace"} · ${formatLabel(slackStatus.workspace?.status ?? "connected")}`}
+                    readOnly
+                  />
+                  {slackStatus.workspace?.status_reason && (
+                    <FieldDescription>
+                      {formatLabel(slackStatus.workspace.status_reason)}
+                    </FieldDescription>
+                  )}
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="slack-invite-command">
+                    Channel invite
+                  </FieldLabel>
+                  <div className="flex gap-2">
+                    <Input id="slack-invite-command" value="/invite @Bella" readOnly />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void copy("slack-invite", "/invite @Bella")}
+                    >
+                      {copied === "slack-invite" ? (
+                        <CheckIcon data-icon="inline-start" />
+                      ) : (
+                        <CopyIcon data-icon="inline-start" />
+                      )}
+                      Copy
+                    </Button>
+                  </div>
+                  <FieldDescription>
+                    Run this in each Slack channel where Bella should create
+                    incident threads.
+                  </FieldDescription>
+                </Field>
+              </FieldGroup>
+
+              {slackStatus.channels.length > 0 ? (
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm font-medium">Detected channels</p>
+                  <div className="flex flex-col gap-2">
+                    {slackStatus.channels.map((channel) => (
+                      <div
+                        key={channel.id}
+                        className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="flex min-w-0 flex-col gap-1">
+                          <p className="truncate text-sm font-medium">
+                            {channel.channel_name
+                              ? `#${channel.channel_name}`
+                              : channel.channel_id}
+                          </p>
+                          <p className="text-muted-foreground text-xs">
+                            {formatLabel(channel.channel_type)}
+                          </p>
+                        </div>
+                        <Badge
+                          variant={
+                            channel.status === "active" ? "secondary" : "outline"
+                          }
+                        >
+                          {formatLabel(channel.status)}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <Alert>
+                  <AlertDescription>
+                    Invite Bella to a Slack channel to activate incident
+                    delivery.
+                  </AlertDescription>
+                </Alert>
+              )}
+            </>
+          ) : (
+            <Alert>
+              <AlertDescription>
+                Install Bella in Slack, then invite it to the channel where
+                incidents should be posted.
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+        <CardFooter className="justify-end gap-3">
+          <Button
+            type="button"
+            onClick={() => void installSlack()}
+            disabled={!selectedOrganizationId || installingSlack}
+          >
+            {installingSlack ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <ExternalLinkIcon data-icon="inline-start" />
+            )}
+            {slackStatus?.installed ? "Reconnect Slack" : "Install Bella in Slack"}
+          </Button>
+        </CardFooter>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -230,4 +399,12 @@ export default function IntegrationsPage() {
       </Card>
     </div>
   )
+}
+
+function formatLabel(value: string) {
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
 }

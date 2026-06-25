@@ -40,6 +40,33 @@ pub struct InstallUrlResponse {
     expires_in: i64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct SlackStatusResponse {
+    installed: bool,
+    workspace: Option<SlackWorkspaceStatus>,
+    channels: Vec<SlackChannelStatus>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SlackWorkspaceStatus {
+    team_id: String,
+    team_name: String,
+    status: String,
+    status_reason: Option<String>,
+    installed_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SlackChannelStatus {
+    id: Uuid,
+    channel_id: String,
+    channel_name: Option<String>,
+    channel_type: String,
+    status: String,
+    discovered_by: String,
+    last_seen_at: chrono::DateTime<Utc>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CallbackQuery {
     code: Option<String>,
@@ -221,6 +248,72 @@ pub async fn send_test_message(
     }
 
     Ok(Json(slack_client.post_test_message().await?))
+}
+
+pub async fn status(
+    State(state): State<AppState>,
+    Path(organization_id): Path<Uuid>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<SlackStatusResponse>, SlackError> {
+    let user = authenticated_user(&state, &jar, &headers).await?;
+    require_membership(&state, user.id, organization_id).await?;
+
+    let workspace = sqlx::query(
+        "select id, slack_team_id, slack_team_name, status, status_reason, installed_at
+         from slack_installations
+         where organization_id = $1
+         order by installed_at desc
+         limit 1",
+    )
+    .bind(organization_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let Some(workspace) = workspace else {
+        return Ok(Json(SlackStatusResponse {
+            installed: false,
+            workspace: None,
+            channels: Vec::new(),
+        }));
+    };
+    let installation_id: Uuid = workspace.get("id");
+
+    let channels = sqlx::query(
+        "select id, slack_channel_id, slack_channel_name, channel_type, status,
+                discovered_by, last_seen_at
+         from slack_delivery_targets
+         where organization_id = $1
+           and slack_installation_id = $2
+         order by status, coalesce(slack_channel_name, slack_channel_id)",
+    )
+    .bind(organization_id)
+    .bind(installation_id)
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|row| SlackChannelStatus {
+        id: row.get("id"),
+        channel_id: row.get("slack_channel_id"),
+        channel_name: row.get("slack_channel_name"),
+        channel_type: row.get("channel_type"),
+        status: row.get("status"),
+        discovered_by: row.get("discovered_by"),
+        last_seen_at: row.get("last_seen_at"),
+    })
+    .collect();
+
+    Ok(Json(SlackStatusResponse {
+        installed: true,
+        workspace: Some(SlackWorkspaceStatus {
+            team_id: workspace.get("slack_team_id"),
+            team_name: workspace.get("slack_team_name"),
+            status: workspace.get("status"),
+            status_reason: workspace.get("status_reason"),
+            installed_at: workspace.get("installed_at"),
+        }),
+        channels,
+    }))
 }
 
 async fn complete_oauth_callback(
@@ -918,6 +1011,26 @@ async fn require_admin_membership(
 
     if !matches!(role.as_str(), "owner" | "admin") {
         return Err(SlackError::Forbidden);
+    }
+    Ok(())
+}
+
+async fn require_membership(
+    state: &AppState,
+    user_id: Uuid,
+    organization_id: Uuid,
+) -> Result<(), SlackError> {
+    let exists = sqlx::query(
+        "select 1 from organization_memberships
+         where organization_id = $1 and user_id = $2",
+    )
+    .bind(organization_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?
+    .is_some();
+    if !exists {
+        return Err(SlackError::NotFound);
     }
     Ok(())
 }
