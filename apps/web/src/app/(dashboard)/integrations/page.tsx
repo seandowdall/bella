@@ -1,10 +1,10 @@
-"use client"
+"use client";
 
-import { useEffect, useMemo, useState } from "react"
-import { CheckIcon, CopyIcon, ExternalLinkIcon, RotateCcwIcon } from "lucide-react"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { useEffect, useMemo, useState } from "react";
+import { CheckIcon, CopyIcon, ExternalLinkIcon, RotateCcwIcon } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -12,86 +12,78 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Spinner } from "@/components/ui/spinner"
-import { connectPosthogIntegration, getIntegrations } from "@/lib/api"
-import { useAuth } from "@/lib/auth-context"
-import type { Integration, PosthogConnection } from "@/lib/dashboard-types"
+} from "@/components/ui/card";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { connectPosthogIntegration, getIntegrations } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import type { Integration, PosthogConnection } from "@/lib/dashboard-types";
 
-const publicApiUrl =
-  process.env.NEXT_PUBLIC_BELLA_PUBLIC_API_URL ?? "http://127.0.0.1:3000"
+const publicApiUrl = process.env.NEXT_PUBLIC_BELLA_PUBLIC_API_URL ?? "http://127.0.0.1:3000";
 
 export default function IntegrationsPage() {
-  const { selectedOrganizationId } = useAuth()
-  const [integrations, setIntegrations] = useState<Integration[]>([])
-  const [connection, setConnection] = useState<PosthogConnection | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [connecting, setConnecting] = useState(false)
-  const [error, setError] = useState("")
-  const [copied, setCopied] = useState("")
+  const { selectedOrganizationId } = useAuth();
+  const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const [connection, setConnection] = useState<PosthogConnection | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState("");
 
-  const posthog = integrations.find(
-    (integration) => integration.integration_type === "posthog",
-  )
+  const posthog = integrations.find((integration) => integration.integration_type === "posthog");
   const webhookUrl = useMemo(() => {
-    if (!selectedOrganizationId) return ""
-    return `${publicApiUrl.replace(/\/$/, "")}/v1/organizations/${selectedOrganizationId}/webhooks/posthog`
-  }, [selectedOrganizationId])
+    if (!selectedOrganizationId) return "";
+    return `${publicApiUrl.replace(/\/$/, "")}/v1/organizations/${selectedOrganizationId}/webhooks/posthog`;
+  }, [selectedOrganizationId]);
 
   useEffect(() => {
-    if (!selectedOrganizationId) return
-    let cancelled = false
+    if (!selectedOrganizationId) return;
+    let cancelled = false;
     const load = async () => {
-      setError("")
+      setError("");
       try {
-        const nextIntegrations = await getIntegrations(selectedOrganizationId)
-        if (!cancelled) setIntegrations(nextIntegrations)
+        const nextIntegrations = await getIntegrations(selectedOrganizationId);
+        if (!cancelled) setIntegrations(nextIntegrations);
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Could not load integrations.")
+          setError(e instanceof Error ? e.message : "Could not load integrations.");
         }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) setLoading(false);
       }
-    }
-    void load()
+    };
+    void load();
     return () => {
-      cancelled = true
-    }
-  }, [selectedOrganizationId])
+      cancelled = true;
+    };
+  }, [selectedOrganizationId]);
 
   const connectPosthog = async () => {
-    if (!selectedOrganizationId) return
-    setConnecting(true)
-    setError("")
+    if (!selectedOrganizationId) return;
+    setConnecting(true);
+    setError("");
     try {
       const nextConnection = await connectPosthogIntegration({
         organizationId: selectedOrganizationId,
-      })
-      setConnection(nextConnection)
+      });
+      setConnection(nextConnection);
       setIntegrations((current) => [
         ...current.filter((item) => item.id !== nextConnection.integration.id),
         nextConnection.integration,
-      ])
+      ]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not connect PostHog.")
+      setError(e instanceof Error ? e.message : "Could not connect PostHog.");
     } finally {
-      setConnecting(false)
+      setConnecting(false);
     }
-  }
+  };
 
   const copy = async (label: string, value: string) => {
-    await navigator.clipboard.writeText(value)
-    setCopied(label)
-    window.setTimeout(() => setCopied(""), 1600)
-  }
+    await navigator.clipboard.writeText(value);
+    setCopied(label);
+    window.setTimeout(() => setCopied(""), 1600);
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -114,8 +106,8 @@ export default function IntegrationsPage() {
             <div className="flex flex-col gap-1">
               <CardTitle>PostHog</CardTitle>
               <CardDescription>
-                Receive error tracking alerts, exception events, and product
-                signals as Bella incidents.
+                Receive error tracking alerts, exception events, and product signals as Bella
+                incidents.
               </CardDescription>
             </div>
             <Badge variant={posthog ? "secondary" : "outline"}>
@@ -150,9 +142,8 @@ export default function IntegrationsPage() {
                     </Button>
                   </div>
                   <FieldDescription>
-                    Set this as the HTTP webhook destination in PostHog. For
-                    deployed self-hosting, set NEXT_PUBLIC_BELLA_PUBLIC_API_URL
-                    to your public API origin.
+                    Set this as the HTTP webhook destination in PostHog. For deployed self-hosting,
+                    set NEXT_PUBLIC_BELLA_PUBLIC_API_URL to your public API origin.
                   </FieldDescription>
                 </Field>
 
@@ -173,9 +164,7 @@ export default function IntegrationsPage() {
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={() =>
-                          void copy("secret", connection.webhook_secret)
-                        }
+                        onClick={() => void copy("secret", connection.webhook_secret)}
                       >
                         {copied === "secret" ? (
                           <CheckIcon data-icon="inline-start" />
@@ -187,9 +176,9 @@ export default function IntegrationsPage() {
                     )}
                   </div>
                   <FieldDescription>
-                    Send this as Authorization: Bearer, X-Bella-Webhook-Secret,
-                    or X-PostHog-Webhook-Secret. The full secret is shown only
-                    when generated or rotated.
+                    Send this as Authorization: Bearer, X-Bella-Webhook-Secret, or
+                    X-PostHog-Webhook-Secret. The full secret is shown only when generated or
+                    rotated.
                   </FieldDescription>
                 </Field>
               </FieldGroup>
@@ -229,5 +218,5 @@ export default function IntegrationsPage() {
         </CardFooter>
       </Card>
     </div>
-  )
+  );
 }

@@ -1,12 +1,14 @@
 {
   "name": "bella-web",
-  "private": true,
   "version": "0.0.0",
+  "private": true,
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 --port 5173",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port 5173",
-    "lint": "eslint"
+    "lint": "oxlint . --deny-warnings",
+    "lint:eslint": "eslint",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.14.23",

@@ -1,24 +1,24 @@
-"use client"
+"use client";
 
-import { useEffect } from "react"
-import { useRouter } from "next/navigation"
-import { ProviderAccounts } from "@/components/provider-accounts"
-import { useAuth } from "@/lib/auth-context"
-import { useAiCostVisibilityFlag } from "@/lib/feature-flags"
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { ProviderAccounts } from "@/components/provider-accounts";
+import { useAuth } from "@/lib/auth-context";
+import { useAiCostVisibilityFlag } from "@/lib/feature-flags";
 
 export default function ProvidersPage() {
-  const router = useRouter()
+  const router = useRouter();
   const { enabled: costVisibilityEnabled, loaded: costVisibilityLoaded } =
-    useAiCostVisibilityFlag()
-  const { selectedOrganization } = useAuth()
+    useAiCostVisibilityFlag();
+  const { selectedOrganization } = useAuth();
 
   useEffect(() => {
     if (costVisibilityLoaded && !costVisibilityEnabled) {
-      router.replace("/")
+      router.replace("/");
     }
-  }, [costVisibilityEnabled, costVisibilityLoaded, router])
+  }, [costVisibilityEnabled, costVisibilityLoaded, router]);
 
-  if (!costVisibilityEnabled) return null
+  if (!costVisibilityEnabled) return null;
 
-  return <ProviderAccounts organization={selectedOrganization} />
+  return <ProviderAccounts organization={selectedOrganization} />;
 }

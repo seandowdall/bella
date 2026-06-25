@@ -1,13 +1,10 @@
-"use client"
+"use client";
 
-import {
-  OrganizationSettings,
-  SettingsPageHeader,
-} from "@/components/settings-sections"
-import { useAuth } from "@/lib/auth-context"
+import { OrganizationSettings, SettingsPageHeader } from "@/components/settings-sections";
+import { useAuth } from "@/lib/auth-context";
 
 export default function SettingsOrganizationPage() {
-  const { selectedOrganization, user } = useAuth()
+  const { selectedOrganization, user } = useAuth();
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
@@ -17,5 +14,5 @@ export default function SettingsOrganizationPage() {
       />
       <OrganizationSettings organization={selectedOrganization} user={user} />
     </div>
-  )
+  );
 }

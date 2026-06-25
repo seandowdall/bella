@@ -1,12 +1,8 @@
-import posthog from "posthog-js"
+import posthog from "posthog-js";
 
-const trackingDisabledHosts = new Set([
-  "localhost",
-  "127.0.0.1",
-  "app.qa.bella.md",
-])
+const trackingDisabledHosts = new Set(["localhost", "127.0.0.1", "app.qa.bella.md"]);
 
-const trackingDisabled = trackingDisabledHosts.has(window.location.hostname)
+const trackingDisabled = trackingDisabledHosts.has(window.location.hostname);
 
 posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
   api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
@@ -19,4 +15,4 @@ posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
   opt_out_capturing_by_default: trackingDisabled,
   opt_out_persistence_by_default: trackingDisabled,
   debug: !trackingDisabled && process.env.NODE_ENV === "development",
-})
+});
