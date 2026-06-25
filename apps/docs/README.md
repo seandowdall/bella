@@ -11,3 +11,4 @@
 ## Self-Hosting
 
 - [Configure GitHub OAuth](self-hosting/github-oauth.md)
+- [Configure Slack incident delivery](self-hosting/slack.md)

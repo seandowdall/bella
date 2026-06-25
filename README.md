@@ -114,6 +114,7 @@ Full setup guides:
 
 - [Contributor OAuth setup](apps/docs/contributors/github-oauth.md)
 - [Self-hosted OAuth setup](apps/docs/self-hosting/github-oauth.md)
+- [Self-hosted Slack incident delivery](apps/docs/self-hosting/slack.md)
 - [OpenAI ingestion](apps/docs/ingestion/openai.md)
 
 ## SDKs

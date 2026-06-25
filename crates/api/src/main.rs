@@ -11,6 +11,7 @@ mod provider_validation;
 mod reporting;
 mod sdk_ingestion;
 mod security;
+mod slack;
 
 use axum::{
     Json, Router,
@@ -20,6 +21,7 @@ use axum::{
     routing::{get, patch, post},
 };
 use bella_db::DbPool;
+use bella_slack::{SlackClient, SlackConfig};
 use serde::Serialize;
 use std::{env, net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
@@ -32,6 +34,7 @@ struct AppState {
     config: Config,
     credential_cipher: credentials::CredentialCipher,
     provider_client: reqwest::Client,
+    slack_client: Option<SlackClient>,
     rate_limiter: Arc<security::RateLimiter>,
 }
 
@@ -44,6 +47,7 @@ struct Config {
     web_url: String,
     secure_cookies: bool,
     openai_base_url: String,
+    slack: Option<SlackConfig>,
     posthog_webhook_secret: Option<String>,
     allowed_origins: Vec<String>,
 }
@@ -84,6 +88,8 @@ impl Config {
         if public_api.scheme() == "https" && !secure_cookies {
             anyhow::bail!("BELLA_SECURE_COOKIES must be true when BELLA_PUBLIC_API_URL uses HTTPS");
         }
+
+        let slack = SlackConfig::from_env()?;
         let allowed_origins = parse_origin_allowlist(&web_url)?;
 
         Ok(Self {
@@ -94,6 +100,7 @@ impl Config {
             web_url,
             secure_cookies,
             openai_base_url,
+            slack,
             posthog_webhook_secret,
             allowed_origins,
         })
@@ -178,6 +185,10 @@ async fn main() -> anyhow::Result<()> {
     let provider_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
+    let slack_client = config
+        .slack
+        .as_ref()
+        .map(|slack_config| SlackClient::new(provider_client.clone(), slack_config.clone()));
 
     let db = bella_db::connect(&database_url).await?;
     bella_db::run_migrations(&db).await?;
@@ -187,6 +198,7 @@ async fn main() -> anyhow::Result<()> {
         config,
         credential_cipher,
         provider_client,
+        slack_client,
         rate_limiter: Arc::new(security::RateLimiter::new()),
     };
     let cors = CorsLayer::new()
@@ -282,6 +294,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/organizations/:organization_id/agent/settings/:setting_id/default",
             post(agent_settings::set_default),
+        )
+        .route(
+            "/v1/organizations/:organization_id/integrations/slack/test-message",
+            post(slack::send_test_message),
         )
         .layer(cors)
         .layer(middleware::from_fn_with_state(
