@@ -9,6 +9,26 @@ use bella_db::DbPool;
 const SLACK_INCIDENT_OPENED: &str = "slack.incident_opened";
 const CLAIM_LIMIT: i64 = 10;
 const MAX_ATTEMPTS: i32 = 5;
+const CLAIM_DUE_JOBS_SQL: &str = "with candidates as (
+             select id
+             from incident_delivery_jobs
+             where organization_id = $1
+               and (
+                    (status = 'pending' and available_at <= now())
+                    or (status = 'processing' and locked_at < now() - interval '10 minutes')
+               )
+             order by available_at, created_at
+             limit $2
+             for update skip locked
+         )
+         update incident_delivery_jobs job
+         set status = 'processing',
+             attempts = job.attempts + 1,
+             locked_at = now(),
+             updated_at = now()
+         from candidates
+         where job.id = candidates.id
+         returning job.id, job.organization_id, job.incident_id, job.delivery_type, job.attempts";
 
 pub struct IncidentDeliveryWorker {
     db: DbPool,
@@ -105,32 +125,11 @@ struct IncidentForDelivery {
 
 async fn claim_due_jobs(db: &DbPool, organization_id: Uuid) -> anyhow::Result<Vec<DeliveryJob>> {
     let mut transaction = db.begin().await?;
-    let rows = sqlx::query(
-        "with candidates as (
-             select id
-             from incident_delivery_jobs
-             where organization_id = $1
-               and (
-                    (status = 'pending' and available_at <= now())
-                    or (status = 'processing' and locked_at < now() - interval '10 minutes')
-               )
-             order by available_at, created_at
-             limit $1
-             for update skip locked
-         )
-         update incident_delivery_jobs job
-         set status = 'processing',
-             attempts = job.attempts + 1,
-             locked_at = now(),
-             updated_at = now()
-         from candidates
-         where job.id = candidates.id
-         returning job.id, job.organization_id, job.incident_id, job.delivery_type, job.attempts",
-    )
-    .bind(organization_id)
-    .bind(CLAIM_LIMIT)
-    .fetch_all(&mut *transaction)
-    .await?;
+    let rows = sqlx::query(CLAIM_DUE_JOBS_SQL)
+        .bind(organization_id)
+        .bind(CLAIM_LIMIT)
+        .fetch_all(&mut *transaction)
+        .await?;
     transaction.commit().await?;
 
     Ok(rows
@@ -222,7 +221,13 @@ fn slack_error(error: SlackClientError) -> anyhow::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::retry_delay_seconds;
+    use super::{CLAIM_DUE_JOBS_SQL, retry_delay_seconds};
+
+    #[test]
+    fn claim_query_uses_second_bind_for_limit() {
+        assert!(CLAIM_DUE_JOBS_SQL.contains("where organization_id = $1"));
+        assert!(CLAIM_DUE_JOBS_SQL.contains("limit $2"));
+    }
 
     #[test]
     fn retries_with_bounded_exponential_backoff() {
