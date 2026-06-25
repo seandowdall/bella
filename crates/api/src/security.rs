@@ -5,51 +5,24 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+use std::time::Duration;
 
 use crate::AppState;
 
 const SESSION_COOKIE: &str = "bella_session";
 
-pub struct RateLimiter {
-    buckets: Mutex<HashMap<String, VecDeque<Instant>>>,
-}
-
-impl RateLimiter {
-    pub fn new() -> Self {
-        Self {
-            buckets: Mutex::new(HashMap::new()),
-        }
-    }
-
-    fn check(&self, key: String, limit: usize, window: Duration) -> bool {
-        let now = Instant::now();
-        let cutoff = now - window;
-        let mut buckets = self.buckets.lock().expect("rate limiter mutex poisoned");
-        if buckets.len() > 10_000 {
-            buckets.retain(|_, hits| hits.back().is_some_and(|last| *last >= cutoff));
-        }
-        let hits = buckets.entry(key).or_default();
-        while hits.front().is_some_and(|hit| *hit < cutoff) {
-            hits.pop_front();
-        }
-        if hits.len() >= limit {
-            return false;
-        }
-        hits.push_back(now);
-        true
-    }
-}
-
 pub async fn guard(State(state): State<AppState>, request: Request, next: Next) -> Response {
     if let Some(response) = enforce_csrf(&state, &request) {
         return response;
     }
-    if let Some(response) = enforce_rate_limit(&state, &request) {
+    if let Some(response) = enforce_rate_limit(
+        &state,
+        request.method().clone(),
+        request.uri().path().to_owned(),
+        client_key(request.headers()).map(str::to_owned),
+    )
+    .await
+    {
         return response;
     }
 
@@ -74,21 +47,65 @@ fn enforce_csrf(state: &AppState, request: &Request) -> Option<Response> {
     ))
 }
 
-fn enforce_rate_limit(state: &AppState, request: &Request) -> Option<Response> {
-    let policy = rate_limit_policy(request.method(), request.uri().path())?;
+async fn enforce_rate_limit(
+    state: &AppState,
+    method: Method,
+    path: String,
+    client_key: Option<String>,
+) -> Option<Response> {
+    let policy = rate_limit_policy(&method, &path)?;
     let key = format!(
         "{}:{}",
         policy.name,
-        client_key(request.headers()).unwrap_or("unknown")
+        client_key.as_deref().unwrap_or("unknown")
     );
-    if state.rate_limiter.check(key, policy.limit, policy.window) {
-        None
-    } else {
-        Some(error_response(
+
+    match check_rate_limit(state, &key, policy.limit, policy.window).await {
+        Ok(true) => None,
+        Ok(false) => Some(error_response(
             StatusCode::TOO_MANY_REQUESTS,
             "too many requests",
-        ))
+        )),
+        Err(error) => {
+            tracing::error!(%error, "rate limit check failed");
+            Some(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "request guard failed",
+            ))
+        }
     }
+}
+
+async fn check_rate_limit(
+    state: &AppState,
+    key: &str,
+    limit: i64,
+    window: Duration,
+) -> Result<bool, sqlx::Error> {
+    let mut transaction = state.db.begin().await?;
+    sqlx::query("select pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+        .bind(key)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query(
+        "delete from rate_limit_hits
+         where key = $1
+           and hit_at < now() - ($2::bigint * interval '1 second')",
+    )
+    .bind(key)
+    .bind(window.as_secs() as i64)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query("insert into rate_limit_hits (key) values ($1)")
+        .bind(key)
+        .execute(&mut *transaction)
+        .await?;
+    let hits: i64 = sqlx::query_scalar("select count(*) from rate_limit_hits where key = $1")
+        .bind(key)
+        .fetch_one(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    Ok(hits <= limit)
 }
 
 fn add_security_headers(headers: &mut HeaderMap) {
@@ -158,7 +175,7 @@ fn is_safe_method(method: &Method) -> bool {
 
 struct RateLimitPolicy {
     name: &'static str,
-    limit: usize,
+    limit: i64,
     window: Duration,
 }
 

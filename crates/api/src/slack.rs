@@ -7,7 +7,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use bella_slack::{PostedMessage, SlackClientError};
+use bella_slack::{PostedMessage, SlackBotToken, SlackClientError, post_test_message_with_client};
 use chrono::{Duration as ChronoDuration, Utc};
 use hmac::{Hmac, Mac};
 use rand::{RngCore, rngs::OsRng};
@@ -239,6 +239,24 @@ pub async fn send_test_message(
 ) -> Result<Json<PostedMessage>, SlackError> {
     let user = authenticated_user(&state, &jar, &headers).await?;
     require_admin_membership(&state, user.id, organization_id).await?;
+    if let Some(target) = load_active_slack_delivery_target(&state, organization_id).await? {
+        let plaintext = state
+            .credential_cipher
+            .decrypt(&target.credential_ciphertext, &target.credential_nonce)
+            .map_err(|_| SlackError::Encryption)?;
+        let bot_token =
+            SlackBotToken::new(String::from_utf8(plaintext).map_err(|_| SlackError::Encryption)?)
+                .map_err(|_| SlackError::Encryption)?;
+        return Ok(Json(
+            post_test_message_with_client(
+                &state.provider_client,
+                &bot_token,
+                &target.slack_channel_id,
+            )
+            .await?,
+        ));
+    }
+
     let slack_client = state
         .slack_client
         .as_ref()
@@ -248,6 +266,46 @@ pub async fn send_test_message(
     }
 
     Ok(Json(slack_client.post_test_message().await?))
+}
+
+struct SlackDeliveryTargetCredential {
+    credential_ciphertext: Vec<u8>,
+    credential_nonce: Vec<u8>,
+    slack_channel_id: String,
+}
+
+async fn load_active_slack_delivery_target(
+    state: &AppState,
+    organization_id: Uuid,
+) -> Result<Option<SlackDeliveryTargetCredential>, SlackError> {
+    let row = sqlx::query(
+        "select c.credential_ciphertext,
+                c.credential_nonce,
+                dt.slack_channel_id
+         from slack_installations si
+         join integration_credentials c
+           on c.integration_id = si.integration_id
+          and c.kind = 'bot_token'
+         join slack_delivery_targets dt
+           on dt.slack_installation_id = si.id
+          and dt.organization_id = si.organization_id
+          and dt.status = 'active'
+         where si.organization_id = $1
+           and si.status = 'connected'
+         order by dt.confirmed_at desc nulls last,
+                  dt.last_seen_at desc,
+                  dt.created_at desc
+         limit 1",
+    )
+    .bind(organization_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    Ok(row.map(|row| SlackDeliveryTargetCredential {
+        credential_ciphertext: row.get("credential_ciphertext"),
+        credential_nonce: row.get("credential_nonce"),
+        slack_channel_id: row.get("slack_channel_id"),
+    }))
 }
 
 pub async fn status(

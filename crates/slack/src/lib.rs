@@ -130,7 +130,8 @@ impl SlackClient {
         channel_id: &str,
         incident: &IncidentSlackReport,
     ) -> Result<PostedMessage, SlackClientError> {
-        self.post_message_with_token(
+        post_message_with_client(
+            &self.client,
             bot_token,
             channel_id,
             &render_incident_opened(incident),
@@ -156,66 +157,32 @@ impl SlackClient {
         text: &str,
         thread_ts: Option<&str>,
     ) -> Result<PostedMessage, SlackClientError> {
-        let response = self
-            .client
-            .post(POST_MESSAGE_URL)
-            .bearer_auth(bot_token.as_str())
-            .json(&PostMessageRequest {
-                channel: channel_id,
-                text,
-                thread_ts,
-            })
-            .send()
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, "Slack chat.postMessage request failed");
-                SlackClientError::Unavailable
-            })?;
-
-        if response.status() == StatusCode::TOO_MANY_REQUESTS {
-            let retry_after_seconds = response
-                .headers()
-                .get("retry-after")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse::<u64>().ok());
-            tracing::warn!(
-                retry_after_seconds,
-                "Slack chat.postMessage was rate limited"
-            );
-            return Err(SlackClientError::RateLimited {
-                retry_after_seconds,
-            });
-        }
-
-        if !response.status().is_success() {
-            tracing::warn!(status = %response.status(), "Slack chat.postMessage returned an error status");
-            return Err(SlackClientError::Unavailable);
-        }
-
-        let payload: PostMessageResponse = response.json().await.map_err(|error| {
-            tracing::warn!(%error, "Slack chat.postMessage returned an invalid response");
-            SlackClientError::Unavailable
-        })?;
-        if !payload.ok {
-            let error = payload.error.as_deref();
-            tracing::warn!(error, "Slack chat.postMessage was rejected");
-            return Err(SlackClientError::from_slack_error(error));
-        }
-
-        let channel_id = payload.channel.ok_or_else(|| {
-            tracing::warn!("Slack chat.postMessage succeeded without a channel ID");
-            SlackClientError::Unavailable
-        })?;
-        let message_ts = payload.ts.ok_or_else(|| {
-            tracing::warn!("Slack chat.postMessage succeeded without a message timestamp");
-            SlackClientError::Unavailable
-        })?;
-
-        Ok(PostedMessage {
-            channel_id,
-            message_ts,
-        })
+        post_message_with_client(&self.client, bot_token, channel_id, text, thread_ts).await
     }
+}
+
+pub async fn post_incident_opened_with_client(
+    client: &Client,
+    bot_token: &SlackBotToken,
+    channel_id: &str,
+    incident: &IncidentSlackReport,
+) -> Result<PostedMessage, SlackClientError> {
+    post_message_with_client(
+        client,
+        bot_token,
+        channel_id,
+        &render_incident_opened(incident),
+        None,
+    )
+    .await
+}
+
+pub async fn post_test_message_with_client(
+    client: &Client,
+    bot_token: &SlackBotToken,
+    channel_id: &str,
+) -> Result<PostedMessage, SlackClientError> {
+    post_message_with_client(client, bot_token, channel_id, TEST_MESSAGE, None).await
 }
 
 #[derive(Debug, Serialize)]
@@ -298,6 +265,73 @@ struct PostMessageRequest<'a> {
     text: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     thread_ts: Option<&'a str>,
+}
+
+async fn post_message_with_client(
+    client: &Client,
+    bot_token: &SlackBotToken,
+    channel_id: &str,
+    text: &str,
+    thread_ts: Option<&str>,
+) -> Result<PostedMessage, SlackClientError> {
+    let response = client
+        .post(POST_MESSAGE_URL)
+        .bearer_auth(bot_token.as_str())
+        .json(&PostMessageRequest {
+            channel: channel_id,
+            text,
+            thread_ts,
+        })
+        .send()
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "Slack chat.postMessage request failed");
+            SlackClientError::Unavailable
+        })?;
+
+    if response.status() == StatusCode::TOO_MANY_REQUESTS {
+        let retry_after_seconds = response
+            .headers()
+            .get("retry-after")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
+        tracing::warn!(
+            retry_after_seconds,
+            "Slack chat.postMessage was rate limited"
+        );
+        return Err(SlackClientError::RateLimited {
+            retry_after_seconds,
+        });
+    }
+
+    if !response.status().is_success() {
+        tracing::warn!(status = %response.status(), "Slack chat.postMessage returned an error status");
+        return Err(SlackClientError::Unavailable);
+    }
+
+    let payload: PostMessageResponse = response.json().await.map_err(|error| {
+        tracing::warn!(%error, "Slack chat.postMessage returned an invalid response");
+        SlackClientError::Unavailable
+    })?;
+    if !payload.ok {
+        let error = payload.error.as_deref();
+        tracing::warn!(error, "Slack chat.postMessage was rejected");
+        return Err(SlackClientError::from_slack_error(error));
+    }
+
+    let channel_id = payload.channel.ok_or_else(|| {
+        tracing::warn!("Slack chat.postMessage succeeded without a channel ID");
+        SlackClientError::Unavailable
+    })?;
+    let message_ts = payload.ts.ok_or_else(|| {
+        tracing::warn!("Slack chat.postMessage succeeded without a message timestamp");
+        SlackClientError::Unavailable
+    })?;
+
+    Ok(PostedMessage {
+        channel_id,
+        message_ts,
+    })
 }
 
 #[derive(Deserialize)]

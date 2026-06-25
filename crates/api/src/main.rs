@@ -35,7 +35,6 @@ struct AppState {
     credential_cipher: credentials::CredentialCipher,
     provider_client: reqwest::Client,
     slack_client: Option<SlackClient>,
-    rate_limiter: Arc<security::RateLimiter>,
 }
 
 #[derive(Clone)]
@@ -281,7 +280,6 @@ async fn main() -> anyhow::Result<()> {
         credential_cipher,
         provider_client,
         slack_client,
-        rate_limiter: Arc::new(security::RateLimiter::new()),
     };
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(move |origin, _| {

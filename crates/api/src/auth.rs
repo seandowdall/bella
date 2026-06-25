@@ -18,6 +18,7 @@ use crate::AppState;
 
 const SESSION_COOKIE: &str = "bella_session";
 const OAUTH_BROWSER_COOKIE: &str = "bella_oauth_browser";
+const API_TOKEN_TTL_DAYS: i64 = 90;
 
 #[derive(Debug, Serialize)]
 pub struct AuthUser {
@@ -178,12 +179,15 @@ pub async fn callback(
         "cli" => {
             let request_id = flow.cli_request_id.ok_or(AuthError::InvalidFlow)?;
             let api_token = random_token();
+            let api_token_expires_at = Utc::now() + ChronoDuration::days(API_TOKEN_TTL_DAYS);
             let mut transaction = state.db.begin().await?;
             sqlx::query(
-                "insert into api_tokens (token_hash, user_id, label) values ($1, $2, 'bella cli')",
+                "insert into api_tokens (token_hash, user_id, label, expires_at)
+                 values ($1, $2, 'bella cli', $3)",
             )
             .bind(hash_token(&api_token))
             .bind(user.id)
+            .bind(api_token_expires_at)
             .execute(&mut *transaction)
             .await?;
             let result = sqlx::query(
@@ -485,7 +489,10 @@ async fn find_user_by_token(state: &AppState, token: &str) -> Result<AuthUser, A
          left join web_sessions s
            on s.user_id = u.id and s.token_hash = $1 and s.expires_at > now()
          left join api_tokens t
-           on t.user_id = u.id and t.token_hash = $1 and t.revoked_at is null
+           on t.user_id = u.id
+          and t.token_hash = $1
+          and t.revoked_at is null
+          and t.expires_at > now()
          where s.token_hash is not null or t.token_hash is not null",
     )
     .bind(&token_hash)

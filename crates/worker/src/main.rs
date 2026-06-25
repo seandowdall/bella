@@ -2,7 +2,6 @@ mod incident_delivery;
 
 use std::{env, time::Duration};
 
-use bella_slack::{SlackClient, SlackConfig};
 use sqlx::Row;
 use tracing_subscriber::{EnvFilter, fmt};
 use uuid::Uuid;
@@ -29,19 +28,19 @@ async fn main() -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
-    let slack_client =
-        SlackConfig::from_env()?.map(|config| SlackClient::new(client.clone(), config));
-
     let db = bella_db::connect(&database_url).await?;
     bella_db::run_migrations(&db).await?;
     let ingestor = bella_ingestion::openai::OpenAiIngestor::new(
         db.clone(),
-        client,
-        credential_cipher,
+        client.clone(),
+        credential_cipher.clone(),
         openai_base_url,
     );
-    let incident_delivery =
-        incident_delivery::IncidentDeliveryWorker::new(db.clone(), slack_client);
+    let incident_delivery = incident_delivery::IncidentDeliveryWorker::new(
+        db.clone(),
+        client.clone(),
+        credential_cipher,
+    );
 
     tracing::info!(poll_interval, "bella-worker started");
     loop {

@@ -128,9 +128,8 @@ model once the investigation pipeline is ready.
    handling.
 5. Add cloud Slack integration status to the web app.
 6. Update the worker to resolve Slack credentials and targets from the database.
-7. Add test-message support for database-backed cloud installations.
-8. Add PostHog-to-Slack end-to-end tests using fake Slack responses.
-9. Keep the self-hosted environment-based path working until there is a clear
+7. Add PostHog-to-Slack end-to-end tests using fake Slack responses.
+8. Keep the self-hosted environment-based path working until there is a clear
    migration path for self-hosted operators.
 
 ### Security Notes
