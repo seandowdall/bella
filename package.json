@@ -1,16 +1,39 @@
 {
   "name": "bella",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "type": "module",
-  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
+    "prepare": "husky",
     "build:sdks": "bun run --filter '@bella/*' build",
-    "typecheck:sdks": "bun run --filter '@bella/*' typecheck"
+    "format": "oxfmt --ignore-path .oxfmtignore --write package.json vitest.config.ts apps/web packages",
+    "format:check": "oxfmt --ignore-path .oxfmtignore --check package.json vitest.config.ts apps/web packages",
+    "lint": "oxlint apps/web packages --deny-warnings",
+    "lint:fix": "oxlint --fix apps/web packages",
+    "rust:check": "cargo check --workspace",
+    "rust:clippy": "cargo clippy --workspace --all-targets -- -D warnings",
+    "rust:fmt": "cargo fmt --all -- --check",
+    "rust:test": "cargo test --workspace",
+    "test": "bun run test:ts && bun run rust:test",
+    "test:ts": "vitest run",
+    "typecheck": "bun run typecheck:web && bun run build:sdks && bun run typecheck:sdks",
+    "typecheck:sdks": "bun run --filter '@bella/*' typecheck",
+    "typecheck:web": "bun run --cwd apps/web typecheck",
+    "verify": "bun run verify:rust && bun run verify:ts",
+    "verify:rust": "bun run rust:fmt && bun run rust:check && bun run rust:clippy && bun run rust:test",
+    "verify:ts": "bun run format:check && bun run lint && bun run typecheck && bun run test:ts"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "oxfmt": "^0.56.0",
+    "oxlint": "^1.71.0",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.9"
   },
   "overrides": {
     "postcss": "8.5.15"
-  },
-  "devDependencies": {
-    "typescript": "~6.0.2"
   }
 }

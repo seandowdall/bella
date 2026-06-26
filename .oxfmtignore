@@ -1,0 +1,8 @@
+apps/site/**
+apps/web/.claude/**
+**/*.md
+**/.next/**
+**/coverage/**
+**/dist/**
+**/node_modules/**
+target/**

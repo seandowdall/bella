@@ -1,0 +1,67 @@
+[
+  {
+    "event_name": "login_clicked",
+    "event_description": "User clicked the 'Continue with GitHub' button to begin OAuth authentication.",
+    "file": "src/components/login-form.tsx"
+  },
+  {
+    "event_name": "organization_created",
+    "event_description": "User successfully created a new Bella organization.",
+    "file": "src/app/(dashboard)/layout.tsx"
+  },
+  {
+    "event_name": "logout_clicked",
+    "event_description": "User clicked logout from the dashboard sidebar.",
+    "file": "src/app/(dashboard)/layout.tsx"
+  },
+  {
+    "event_name": "provider_connected",
+    "event_description": "User successfully connected a new AI provider account (e.g. Anthropic, OpenAI).",
+    "file": "src/components/provider-accounts.tsx"
+  },
+  {
+    "event_name": "provider_disconnected",
+    "event_description": "User deleted a provider account, removing its credentials and usage source.",
+    "file": "src/components/provider-accounts.tsx"
+  },
+  {
+    "event_name": "provider_synced",
+    "event_description": "User manually triggered a usage sync for a provider account.",
+    "file": "src/components/provider-accounts.tsx"
+  },
+  {
+    "event_name": "posthog_integration_connected",
+    "event_description": "User connected or rotated the PostHog webhook integration secret.",
+    "file": "src/app/(dashboard)/integrations/page.tsx"
+  },
+  {
+    "event_name": "agent_message_sent",
+    "event_description": "User sent a message to the Bella AI agent in the chat interface.",
+    "file": "src/app/(dashboard)/page.tsx"
+  },
+  {
+    "event_name": "agent_slash_command_used",
+    "event_description": "User submitted a slash command (e.g. /summary, /providers) to the Bella agent.",
+    "file": "src/app/(dashboard)/page.tsx"
+  },
+  {
+    "event_name": "ai_model_changed",
+    "event_description": "User selected a different AI model in the chat model selector.",
+    "file": "src/app/(dashboard)/page.tsx"
+  },
+  {
+    "event_name": "byok_key_added",
+    "event_description": "User added a new BYOK LLM API key for the Bella agent.",
+    "file": "src/components/settings-sections.tsx"
+  },
+  {
+    "event_name": "byok_key_removed",
+    "event_description": "User removed a BYOK LLM API key from the organization.",
+    "file": "src/components/settings-sections.tsx"
+  },
+  {
+    "event_name": "incident_viewed",
+    "event_description": "User opened an incident detail page to investigate a PostHog signal.",
+    "file": "src/app/(dashboard)/incidents/[incidentId]/page.tsx"
+  }
+]

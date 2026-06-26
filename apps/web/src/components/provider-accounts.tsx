@@ -1,6 +1,6 @@
-"use client"
+"use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react"
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   CableIcon,
   ChevronsUpDownIcon,
@@ -9,8 +9,8 @@ import {
   PencilIcon,
   RefreshCwIcon,
   Trash2Icon,
-} from "lucide-react"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+} from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,16 +20,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,14 +31,14 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "@/components/ui/dropdown-menu";
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "@/components/ui/empty"
+} from "@/components/ui/empty";
 import {
   Command,
   CommandEmpty,
@@ -52,19 +46,10 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from "@/components/ui/command"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
+} from "@/components/ui/command";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Sheet,
   SheetContent,
@@ -72,8 +57,8 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet"
-import { Spinner } from "@/components/ui/spinner"
+} from "@/components/ui/sheet";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -81,9 +66,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
-import { ProviderIcon } from "@/components/provider-icon"
-import { useProviderDialog } from "@/components/provider-dialog-context"
+} from "@/components/ui/table";
+import { ProviderIcon } from "@/components/provider-icon";
+import { useProviderDialog } from "@/components/provider-dialog-context";
+import posthog from "posthog-js";
 import {
   connectProviderAccount,
   deleteProviderAccount,
@@ -91,14 +77,10 @@ import {
   getProviderCatalog,
   syncProviderAccount,
   updateProviderAccount,
-} from "@/lib/api"
-import type {
-  Organization,
-  ProviderAccount,
-  ProviderDefinition,
-} from "@/lib/dashboard-types"
+} from "@/lib/api";
+import type { Organization, ProviderAccount, ProviderDefinition } from "@/lib/dashboard-types";
 
-const visibleProviderIds = new Set(["anthropic", "openai"])
+const visibleProviderIds = new Set(["anthropic", "openai"]);
 
 const statusLabels = {
   saved_unverified: "Saved, unverified",
@@ -107,152 +89,135 @@ const statusLabels = {
   insufficient_permissions: "Missing permissions",
   validation_unavailable: "Validation unavailable",
   disabled: "Disabled",
-}
+};
 
-export function ProviderAccounts({
-  organization,
-}: {
-  organization?: Organization
-}) {
-  const { open, setOpen } = useProviderDialog()
-  const [catalog, setCatalog] = useState<ProviderDefinition[]>([])
-  const [accounts, setAccounts] = useState<ProviderAccount[]>([])
-  const [selectedProviderId, setSelectedProviderId] = useState("")
-  const [comboboxOpen, setComboboxOpen] = useState(false)
-  const [displayName, setDisplayName] = useState("")
-  const [secret, setSecret] = useState("")
-  const [editingAccount, setEditingAccount] =
-    useState<ProviderAccount | null>(null)
-  const [accountToDelete, setAccountToDelete] =
-    useState<ProviderAccount | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const [syncingAccountId, setSyncingAccountId] = useState("")
-  const [error, setError] = useState("")
+export function ProviderAccounts({ organization }: { organization?: Organization }) {
+  const { open, setOpen } = useProviderDialog();
+  const [catalog, setCatalog] = useState<ProviderDefinition[]>([]);
+  const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
+  const [selectedProviderId, setSelectedProviderId] = useState("");
+  const [comboboxOpen, setComboboxOpen] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [secret, setSecret] = useState("");
+  const [editingAccount, setEditingAccount] = useState<ProviderAccount | null>(null);
+  const [accountToDelete, setAccountToDelete] = useState<ProviderAccount | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [syncingAccountId, setSyncingAccountId] = useState("");
+  const [error, setError] = useState("");
 
-  const canManage =
-    organization?.role === "owner" || organization?.role === "admin"
+  const canManage = organization?.role === "owner" || organization?.role === "admin";
   const selectedProvider = useMemo(
     () => catalog.find((provider) => provider.id === selectedProviderId),
     [catalog, selectedProviderId],
-  )
+  );
 
   const handleOpenChange = (nextOpen: boolean) => {
-    setOpen(nextOpen)
+    setOpen(nextOpen);
     if (!nextOpen) {
-      setComboboxOpen(false)
-      setDisplayName("")
-      setSecret("")
-      setEditingAccount(null)
-      setError("")
+      setComboboxOpen(false);
+      setDisplayName("");
+      setSecret("");
+      setEditingAccount(null);
+      setError("");
     }
-  }
+  };
 
   const openEdit = (account: ProviderAccount) => {
-    setEditingAccount(account)
-    setSelectedProviderId(account.provider)
-    setDisplayName(account.display_name)
-    setSecret("")
-    setError("")
-    setOpen(true)
-  }
+    setEditingAccount(account);
+    setSelectedProviderId(account.provider);
+    setDisplayName(account.display_name);
+    setSecret("");
+    setError("");
+    setOpen(true);
+  };
 
   useEffect(() => {
     const load = async () => {
-      if (!organization) return
-      setLoading(true)
-      setError("")
+      if (!organization) return;
+      setLoading(true);
+      setError("");
       try {
         const [definitions, providerAccounts] = await Promise.all([
           getProviderCatalog(),
           getProviderAccounts(organization.id),
-        ])
+        ]);
         const visibleDefinitions = definitions.filter((provider) =>
           visibleProviderIds.has(provider.id),
-        )
-        setCatalog(visibleDefinitions)
-        setAccounts(
-          providerAccounts.filter((account) =>
-            visibleProviderIds.has(account.provider),
-          ),
-        )
-        setSelectedProviderId(
-          (current) => current || visibleDefinitions[0]?.id || "",
-        )
+        );
+        setCatalog(visibleDefinitions);
+        setAccounts(providerAccounts.filter((account) => visibleProviderIds.has(account.provider)));
+        setSelectedProviderId((current) => current || visibleDefinitions[0]?.id || "");
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not load providers.")
+        setError(e instanceof Error ? e.message : "Could not load providers.");
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
-    }
-    void load()
-  }, [organization])
+    };
+    void load();
+  }, [organization]);
 
   const handleConnect = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!organization || !selectedProvider) return
-    setSaving(true)
-    setError("")
+    event.preventDefault();
+    if (!organization || !selectedProvider) return;
+    setSaving(true);
+    setError("");
     try {
       const account = editingAccount
-        ? await updateProviderAccount(
-            organization.id,
-            editingAccount.id,
-            displayName,
-          )
+        ? await updateProviderAccount(organization.id, editingAccount.id, displayName)
         : await connectProviderAccount({
             organizationId: organization.id,
             workspaceId: organization.default_workspace.id,
             provider: selectedProvider.id,
             displayName,
             secret,
-          })
-      setAccounts((current) => [
-        ...current.filter((item) => item.id !== account.id),
-        account,
-      ])
-      handleOpenChange(false)
+          });
+      if (!editingAccount) {
+        posthog.capture("provider_connected", {
+          provider: selectedProvider.id,
+          provider_name: selectedProvider.name,
+          display_name: displayName,
+        });
+      }
+      setAccounts((current) => [...current.filter((item) => item.id !== account.id), account]);
+      handleOpenChange(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not connect provider.")
+      setError(e instanceof Error ? e.message : "Could not connect provider.");
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
-  }
+  };
 
   const handleDelete = async () => {
-    if (!organization || !accountToDelete) return
-    setDeleting(true)
-    setError("")
+    if (!organization || !accountToDelete) return;
+    setDeleting(true);
+    setError("");
     try {
-      await deleteProviderAccount(organization.id, accountToDelete.id)
-      setAccounts((current) =>
-        current.filter((account) => account.id !== accountToDelete.id),
-      )
-      setAccountToDelete(null)
+      await deleteProviderAccount(organization.id, accountToDelete.id);
+      setAccounts((current) => current.filter((account) => account.id !== accountToDelete.id));
+      setAccountToDelete(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not disconnect provider.")
+      setError(e instanceof Error ? e.message : "Could not disconnect provider.");
     } finally {
-      setDeleting(false)
+      setDeleting(false);
     }
-  }
+  };
 
   const handleSync = async (account: ProviderAccount) => {
-    if (!organization) return
-    setSyncingAccountId(account.id)
-    setError("")
+    if (!organization) return;
+    setSyncingAccountId(account.id);
+    setError("");
     try {
-      await syncProviderAccount(organization.id, account.id)
-      const providerAccounts = await getProviderAccounts(organization.id)
-      setAccounts(
-        providerAccounts.filter((item) => visibleProviderIds.has(item.provider)),
-      )
+      await syncProviderAccount(organization.id, account.id);
+      const providerAccounts = await getProviderAccounts(organization.id);
+      setAccounts(providerAccounts.filter((item) => visibleProviderIds.has(item.provider)));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not sync provider account.")
+      setError(e instanceof Error ? e.message : "Could not sync provider account.");
     } finally {
-      setSyncingAccountId("")
+      setSyncingAccountId("");
     }
-  }
+  };
 
   return (
     <>
@@ -260,8 +225,7 @@ export function ProviderAccounts({
         <CardHeader>
           <CardTitle>Provider accounts</CardTitle>
           <CardDescription>
-            Credentials and usage sources for{" "}
-            {organization?.name ?? "this organization"}.
+            Credentials and usage sources for {organization?.name ?? "this organization"}.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -292,9 +256,7 @@ export function ProviderAccounts({
                   </TableRow>
                 ) : accounts.length ? (
                   accounts.map((account) => {
-                    const definition = catalog.find(
-                      (provider) => provider.id === account.provider,
-                    )
+                    const definition = catalog.find((provider) => provider.id === account.provider);
                     return (
                       <TableRow key={account.id}>
                         <TableCell className="font-medium">
@@ -341,11 +303,7 @@ export function ProviderAccounts({
                         <TableCell>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button
-                                size="icon-sm"
-                                variant="ghost"
-                                disabled={!canManage}
-                              >
+                              <Button size="icon-sm" variant="ghost" disabled={!canManage}>
                                 <MoreHorizontalIcon />
                                 <span className="sr-only">
                                   Open options for {account.display_name}
@@ -361,8 +319,8 @@ export function ProviderAccounts({
                                     syncingAccountId === account.id
                                   }
                                   onSelect={(event) => {
-                                    event.preventDefault()
-                                    void handleSync(account)
+                                    event.preventDefault();
+                                    void handleSync(account);
                                   }}
                                 >
                                   {syncingAccountId === account.id ? (
@@ -372,9 +330,7 @@ export function ProviderAccounts({
                                   )}
                                   Sync now
                                 </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onSelect={() => openEdit(account)}
-                                >
+                                <DropdownMenuItem onSelect={() => openEdit(account)}>
                                   <PencilIcon />
                                   Edit account
                                 </DropdownMenuItem>
@@ -393,7 +349,7 @@ export function ProviderAccounts({
                           </DropdownMenu>
                         </TableCell>
                       </TableRow>
-                    )
+                    );
                   })
                 ) : (
                   <TableRow>
@@ -405,8 +361,7 @@ export function ProviderAccounts({
                           </EmptyMedia>
                           <EmptyTitle>No provider accounts</EmptyTitle>
                           <EmptyDescription>
-                            Connect an AI provider to begin importing usage and
-                            calculating costs.
+                            Connect an AI provider to begin importing usage and calculating costs.
                           </EmptyDescription>
                         </EmptyHeader>
                       </Empty>
@@ -452,6 +407,7 @@ export function ProviderAccounts({
                       <Button
                         variant="outline"
                         role="combobox"
+                        aria-controls="provider-account-provider-list"
                         aria-expanded={comboboxOpen}
                         className="w-full justify-between"
                       >
@@ -471,6 +427,7 @@ export function ProviderAccounts({
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent
+                      id="provider-account-provider-list"
                       align="start"
                       className="w-(--radix-popover-trigger-width) p-0"
                     >
@@ -484,19 +441,13 @@ export function ProviderAccounts({
                                 key={provider.id}
                                 value={provider.id}
                                 keywords={[provider.name]}
-                                data-checked={
-                                  provider.id === selectedProviderId
-                                }
+                                data-checked={provider.id === selectedProviderId}
                                 onSelect={() => {
-                                  setSelectedProviderId(provider.id)
-                                  setComboboxOpen(false)
+                                  setSelectedProviderId(provider.id);
+                                  setComboboxOpen(false);
                                 }}
                               >
-                                <ProviderIcon
-                                  provider={provider.id}
-                                  name={provider.name}
-                                  compact
-                                />
+                                <ProviderIcon provider={provider.id} name={provider.name} compact />
                                 <span>{provider.name}</span>
                               </CommandItem>
                             ))}
@@ -525,9 +476,7 @@ export function ProviderAccounts({
                   maxLength={80}
                   required
                 />
-                <FieldDescription>
-                  A stable name for this provider account.
-                </FieldDescription>
+                <FieldDescription>A stable name for this provider account.</FieldDescription>
               </Field>
               {!editingAccount && (
                 <>
@@ -545,18 +494,14 @@ export function ProviderAccounts({
                       required
                     />
                     <FieldDescription>
-                      Bella validates this credential automatically, then
-                      encrypts it with AES-256-GCM before database storage.
+                      Bella validates this credential automatically, then encrypts it with
+                      AES-256-GCM before database storage.
                     </FieldDescription>
                   </Field>
                   {selectedProvider && (
                     <Field>
                       <FieldDescription>
-                        <a
-                          href={selectedProvider.docs_url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
+                        <a href={selectedProvider.docs_url} target="_blank" rel="noreferrer">
                           Open provider credential documentation
                           <ExternalLinkIcon className="ml-1 inline size-3" />
                         </a>
@@ -590,15 +535,15 @@ export function ProviderAccounts({
       <AlertDialog
         open={accountToDelete !== null}
         onOpenChange={(nextOpen) => {
-          if (!nextOpen && !deleting) setAccountToDelete(null)
+          if (!nextOpen && !deleting) setAccountToDelete(null);
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete provider account?</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently deletes {accountToDelete?.display_name} and its
-              encrypted admin credential. This action cannot be undone.
+              This permanently deletes {accountToDelete?.display_name} and its encrypted admin
+              credential. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -607,8 +552,8 @@ export function ProviderAccounts({
               variant="destructive"
               disabled={deleting}
               onClick={(event) => {
-                event.preventDefault()
-                void handleDelete()
+                event.preventDefault();
+                void handleDelete();
               }}
             >
               {deleting && <Spinner data-icon="inline-start" />}
@@ -618,15 +563,15 @@ export function ProviderAccounts({
         </AlertDialogContent>
       </AlertDialog>
     </>
-  )
+  );
 }
 
 function formatDateTime(value: string | null) {
-  if (!value) return "never"
+  if (!value) return "never";
   return new Date(value).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  })
+  });
 }

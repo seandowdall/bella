@@ -1,4 +1,4 @@
-import { Badge } from '@/components/ui/badge'
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardAction,
@@ -6,38 +6,32 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card'
-import type { UsageSummary } from '@/lib/dashboard-types'
+} from "@/components/ui/card";
+import type { UsageSummary } from "@/lib/dashboard-types";
 
-export function SectionCards({
-  summary,
-  loading,
-}: {
-  summary?: UsageSummary
-  loading?: boolean
-}) {
+export function SectionCards({ summary, loading }: { summary?: UsageSummary; loading?: boolean }) {
   const metrics = [
     {
-      label: 'Total spend',
-      value: loading ? '...' : formatMicros(summary?.total_spend_micros ?? 0),
-      description: 'Selected date range',
+      label: "Total spend",
+      value: loading ? "..." : formatMicros(summary?.total_spend_micros ?? 0),
+      description: "Selected date range",
     },
     {
-      label: 'Input tokens',
-      value: loading ? '...' : formatNumber(summary?.input_tokens ?? 0),
-      description: 'Across all providers',
+      label: "Input tokens",
+      value: loading ? "..." : formatNumber(summary?.input_tokens ?? 0),
+      description: "Across all providers",
     },
     {
-      label: 'Output tokens',
-      value: loading ? '...' : formatNumber(summary?.output_tokens ?? 0),
-      description: 'Across all providers',
+      label: "Output tokens",
+      value: loading ? "..." : formatNumber(summary?.output_tokens ?? 0),
+      description: "Across all providers",
     },
     {
-      label: 'Requests',
-      value: loading ? '...' : formatNumber(summary?.request_count ?? 0),
-      description: 'Model calls imported',
+      label: "Requests",
+      value: loading ? "..." : formatNumber(summary?.request_count ?? 0),
+      description: "Model calls imported",
     },
-  ]
+  ];
 
   return (
     <div className="grid grid-cols-1 gap-4 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
@@ -52,25 +46,23 @@ export function SectionCards({
               {metric.value}
             </CardTitle>
             <CardAction>
-              <Badge variant="outline">{loading ? 'Loading' : 'Live data'}</Badge>
+              <Badge variant="outline">{loading ? "Loading" : "Live data"}</Badge>
             </CardAction>
           </CardHeader>
-          <CardFooter className="text-muted-foreground text-sm">
-            {metric.description}
-          </CardFooter>
+          <CardFooter className="text-muted-foreground text-sm">{metric.description}</CardFooter>
         </Card>
       ))}
     </div>
-  )
+  );
 }
 
 function formatMicros(value: number) {
   return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: 'USD',
-  }).format(value / 1_000_000)
+    style: "currency",
+    currency: "USD",
+  }).format(value / 1_000_000);
 }
 
 function formatNumber(value: number) {
-  return new Intl.NumberFormat().format(value)
+  return new Intl.NumberFormat().format(value);
 }

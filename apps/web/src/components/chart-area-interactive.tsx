@@ -1,4 +1,4 @@
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import {
   Card,
   CardAction,
@@ -6,13 +6,13 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card'
+} from "@/components/ui/card";
 import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
-} from '@/components/ui/chart'
+} from "@/components/ui/chart";
 import {
   Select,
   SelectContent,
@@ -20,25 +20,25 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from "@/components/ui/select";
 
 const chartConfig = {
   spend: {
-    label: 'Spend',
-    color: 'var(--primary)',
+    label: "Spend",
+    color: "var(--primary)",
   },
-} satisfies ChartConfig
+} satisfies ChartConfig;
 
 const ranges = {
-  '7d': 7,
-  '30d': 30,
-  '90d': 90,
-}
+  "7d": 7,
+  "30d": 30,
+  "90d": 90,
+};
 
-export type TimeRange = keyof typeof ranges
+export type TimeRange = keyof typeof ranges;
 
 export function daysForRange(range: TimeRange) {
-  return ranges[range]
+  return ranges[range];
 }
 
 export function ChartAreaInteractive({
@@ -46,24 +46,19 @@ export function ChartAreaInteractive({
   onTimeRangeChange,
   chartData,
 }: {
-  timeRange: TimeRange
-  onTimeRangeChange: (range: TimeRange) => void
-  chartData: Array<{ date: string; spend: number }>
+  timeRange: TimeRange;
+  onTimeRangeChange: (range: TimeRange) => void;
+  chartData: Array<{ date: string; spend: number }>;
 }) {
-
   return (
     <Card className="@container/card">
       <CardHeader>
-          <CardTitle>AI spend</CardTitle>
-          <CardDescription>
-          Daily provider costs from normalized ingestion data.
-          </CardDescription>
+        <CardTitle>AI spend</CardTitle>
+        <CardDescription>Daily provider costs from normalized ingestion data.</CardDescription>
         <CardAction>
           <Select
             value={timeRange}
-            onValueChange={(value) =>
-              onTimeRangeChange(value as TimeRange)
-            }
+            onValueChange={(value) => onTimeRangeChange(value as TimeRange)}
           >
             <SelectTrigger size="sm" className="w-36" aria-label="Time range">
               <SelectValue />
@@ -79,23 +74,12 @@ export function ChartAreaInteractive({
         </CardAction>
       </CardHeader>
       <CardContent className="px-2 pt-4 sm:px-6">
-        <ChartContainer
-          config={chartConfig}
-          className="aspect-auto h-64 w-full"
-        >
+        <ChartContainer config={chartConfig} className="aspect-auto h-64 w-full">
           <AreaChart data={chartData}>
             <defs>
               <linearGradient id="fillSpend" x1="0" y1="0" x2="0" y2="1">
-                <stop
-                  offset="5%"
-                  stopColor="var(--color-spend)"
-                  stopOpacity={0.7}
-                />
-                <stop
-                  offset="95%"
-                  stopColor="var(--color-spend)"
-                  stopOpacity={0.05}
-                />
+                <stop offset="5%" stopColor="var(--color-spend)" stopOpacity={0.7} />
+                <stop offset="95%" stopColor="var(--color-spend)" stopOpacity={0.05} />
               </linearGradient>
             </defs>
             <CartesianGrid vertical={false} />
@@ -107,8 +91,8 @@ export function ChartAreaInteractive({
               minTickGap={32}
               tickFormatter={(value: string) =>
                 new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
-                  month: 'short',
-                  day: 'numeric',
+                  month: "short",
+                  day: "numeric",
                 })
               }
             />
@@ -123,9 +107,7 @@ export function ChartAreaInteractive({
               content={
                 <ChartTooltipContent
                   indicator="dot"
-                  labelFormatter={(value) =>
-                    new Date(`${value}T00:00:00`).toLocaleDateString()
-                  }
+                  labelFormatter={(value) => new Date(`${value}T00:00:00`).toLocaleDateString()}
                   formatter={(value) => `$${Number(value).toFixed(2)}`}
                 />
               }
@@ -140,5 +122,5 @@ export function ChartAreaInteractive({
         </ChartContainer>
       </CardContent>
     </Card>
-  )
+  );
 }

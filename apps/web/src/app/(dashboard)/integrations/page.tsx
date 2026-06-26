@@ -1,16 +1,16 @@
-"use client"
+"use client";
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react";
 import {
   CheckIcon,
   CopyIcon,
   ExternalLinkIcon,
   MessageSquareIcon,
   RotateCcwIcon,
-} from "lucide-react"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+} from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -18,119 +18,107 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Spinner } from "@/components/ui/spinner"
+} from "@/components/ui/card";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import {
   connectPosthogIntegration,
   createSlackInstallUrl,
   getIntegrations,
   getSlackStatus,
-} from "@/lib/api"
-import { useAuth } from "@/lib/auth-context"
-import type {
-  Integration,
-  PosthogConnection,
-  SlackStatus,
-} from "@/lib/dashboard-types"
+} from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import type { Integration, PosthogConnection, SlackStatus } from "@/lib/dashboard-types";
 
-const publicApiUrl =
-  process.env.NEXT_PUBLIC_BELLA_PUBLIC_API_URL ?? "http://127.0.0.1:3000"
+const publicApiUrl = process.env.NEXT_PUBLIC_BELLA_PUBLIC_API_URL ?? "http://127.0.0.1:3000";
 
 export default function IntegrationsPage() {
-  const { selectedOrganizationId } = useAuth()
-  const [integrations, setIntegrations] = useState<Integration[]>([])
-  const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null)
-  const [connection, setConnection] = useState<PosthogConnection | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [installingSlack, setInstallingSlack] = useState(false)
-  const [connecting, setConnecting] = useState(false)
-  const [error, setError] = useState("")
-  const [copied, setCopied] = useState("")
+  const { selectedOrganizationId } = useAuth();
+  const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
+  const [connection, setConnection] = useState<PosthogConnection | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [installingSlack, setInstallingSlack] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState("");
 
-  const posthog = integrations.find(
-    (integration) => integration.integration_type === "posthog",
-  )
+  const posthog = integrations.find((integration) => integration.integration_type === "posthog");
   const webhookUrl = useMemo(() => {
-    if (!selectedOrganizationId) return ""
-    return `${publicApiUrl.replace(/\/$/, "")}/v1/organizations/${selectedOrganizationId}/webhooks/posthog`
-  }, [selectedOrganizationId])
+    if (!selectedOrganizationId) return "";
+    return `${publicApiUrl.replace(/\/$/, "")}/v1/organizations/${selectedOrganizationId}/webhooks/posthog`;
+  }, [selectedOrganizationId]);
 
   useEffect(() => {
-    if (!selectedOrganizationId) return
-    let cancelled = false
+    if (!selectedOrganizationId) return;
+    let cancelled = false;
     const load = async () => {
-      setError("")
+      setError("");
       try {
         const [nextIntegrations, nextSlackStatus] = await Promise.all([
           getIntegrations(selectedOrganizationId),
           getSlackStatus(selectedOrganizationId),
-        ])
+        ]);
         if (!cancelled) {
-          setIntegrations(nextIntegrations)
-          setSlackStatus(nextSlackStatus)
+          setIntegrations(nextIntegrations);
+          setSlackStatus(nextSlackStatus);
         }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Could not load integrations.")
+          setError(e instanceof Error ? e.message : "Could not load integrations.");
         }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) setLoading(false);
       }
-    }
-    void load()
+    };
+    void load();
     return () => {
-      cancelled = true
-    }
-  }, [selectedOrganizationId])
+      cancelled = true;
+    };
+  }, [selectedOrganizationId]);
 
   const connectPosthog = async () => {
-    if (!selectedOrganizationId) return
-    setConnecting(true)
-    setError("")
+    if (!selectedOrganizationId) return;
+    setConnecting(true);
+    setError("");
     try {
       const nextConnection = await connectPosthogIntegration({
         organizationId: selectedOrganizationId,
-      })
-      setConnection(nextConnection)
+      });
+      setConnection(nextConnection);
       setIntegrations((current) => [
         ...current.filter((item) => item.id !== nextConnection.integration.id),
         nextConnection.integration,
-      ])
+      ]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not connect PostHog.")
+      setError(e instanceof Error ? e.message : "Could not connect PostHog.");
     } finally {
-      setConnecting(false)
+      setConnecting(false);
     }
-  }
+  };
 
   const installSlack = async () => {
-    if (!selectedOrganizationId) return
-    setInstallingSlack(true)
-    setError("")
+    if (!selectedOrganizationId) return;
+    setInstallingSlack(true);
+    setError("");
     try {
       const result = await createSlackInstallUrl({
         organizationId: selectedOrganizationId,
         returnTo: window.location.href,
-      })
-      window.location.assign(result.install_url)
+      });
+      window.location.assign(result.install_url);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not start Slack install.")
-      setInstallingSlack(false)
+      setError(e instanceof Error ? e.message : "Could not start Slack install.");
+      setInstallingSlack(false);
     }
-  }
+  };
 
   const copy = async (label: string, value: string) => {
-    await navigator.clipboard.writeText(value)
-    setCopied(label)
-    window.setTimeout(() => setCopied(""), 1600)
-  }
+    await navigator.clipboard.writeText(value);
+    setCopied(label);
+    window.setTimeout(() => setCopied(""), 1600);
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -156,8 +144,7 @@ export default function IntegrationsPage() {
                 Slack
               </CardTitle>
               <CardDescription>
-                Route new incident threads to the Slack channels where Bella is
-                invited.
+                Route new incident threads to the Slack channels where Bella is invited.
               </CardDescription>
             </div>
             <Badge variant={slackStatus?.installed ? "secondary" : "outline"}>
@@ -188,9 +175,7 @@ export default function IntegrationsPage() {
                   )}
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="slack-invite-command">
-                    Channel invite
-                  </FieldLabel>
+                  <FieldLabel htmlFor="slack-invite-command">Channel invite</FieldLabel>
                   <div className="flex gap-2">
                     <Input id="slack-invite-command" value="/invite @Bella" readOnly />
                     <Button
@@ -207,8 +192,7 @@ export default function IntegrationsPage() {
                     </Button>
                   </div>
                   <FieldDescription>
-                    Run this in each Slack channel where Bella should create
-                    incident threads.
+                    Run this in each Slack channel where Bella should create incident threads.
                   </FieldDescription>
                 </Field>
               </FieldGroup>
@@ -224,19 +208,13 @@ export default function IntegrationsPage() {
                       >
                         <div className="flex min-w-0 flex-col gap-1">
                           <p className="truncate text-sm font-medium">
-                            {channel.channel_name
-                              ? `#${channel.channel_name}`
-                              : channel.channel_id}
+                            {channel.channel_name ? `#${channel.channel_name}` : channel.channel_id}
                           </p>
                           <p className="text-muted-foreground text-xs">
                             {formatLabel(channel.channel_type)}
                           </p>
                         </div>
-                        <Badge
-                          variant={
-                            channel.status === "active" ? "secondary" : "outline"
-                          }
-                        >
+                        <Badge variant={channel.status === "active" ? "secondary" : "outline"}>
                           {formatLabel(channel.status)}
                         </Badge>
                       </div>
@@ -246,8 +224,7 @@ export default function IntegrationsPage() {
               ) : (
                 <Alert>
                   <AlertDescription>
-                    Invite Bella to a Slack channel to activate incident
-                    delivery.
+                    Invite Bella to a Slack channel to activate incident delivery.
                   </AlertDescription>
                 </Alert>
               )}
@@ -255,8 +232,8 @@ export default function IntegrationsPage() {
           ) : (
             <Alert>
               <AlertDescription>
-                Install Bella in Slack, then invite it to the channel where
-                incidents should be posted.
+                Install Bella in Slack, then invite it to the channel where incidents should be
+                posted.
               </AlertDescription>
             </Alert>
           )}
@@ -283,8 +260,8 @@ export default function IntegrationsPage() {
             <div className="flex flex-col gap-1">
               <CardTitle>PostHog</CardTitle>
               <CardDescription>
-                Receive error tracking alerts, exception events, and product
-                signals as Bella incidents.
+                Receive error tracking alerts, exception events, and product signals as Bella
+                incidents.
               </CardDescription>
             </div>
             <Badge variant={posthog ? "secondary" : "outline"}>
@@ -319,9 +296,8 @@ export default function IntegrationsPage() {
                     </Button>
                   </div>
                   <FieldDescription>
-                    Set this as the HTTP webhook destination in PostHog. For
-                    deployed self-hosting, set NEXT_PUBLIC_BELLA_PUBLIC_API_URL
-                    to your public API origin.
+                    Set this as the HTTP webhook destination in PostHog. For deployed self-hosting,
+                    set NEXT_PUBLIC_BELLA_PUBLIC_API_URL to your public API origin.
                   </FieldDescription>
                 </Field>
 
@@ -342,9 +318,7 @@ export default function IntegrationsPage() {
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={() =>
-                          void copy("secret", connection.webhook_secret)
-                        }
+                        onClick={() => void copy("secret", connection.webhook_secret)}
                       >
                         {copied === "secret" ? (
                           <CheckIcon data-icon="inline-start" />
@@ -356,9 +330,9 @@ export default function IntegrationsPage() {
                     )}
                   </div>
                   <FieldDescription>
-                    Send this as Authorization: Bearer, X-Bella-Webhook-Secret,
-                    or X-PostHog-Webhook-Secret. The full secret is shown only
-                    when generated or rotated.
+                    Send this as Authorization: Bearer, X-Bella-Webhook-Secret, or
+                    X-PostHog-Webhook-Secret. The full secret is shown only when generated or
+                    rotated.
                   </FieldDescription>
                 </Field>
               </FieldGroup>
@@ -398,7 +372,7 @@ export default function IntegrationsPage() {
         </CardFooter>
       </Card>
     </div>
-  )
+  );
 }
 
 function formatLabel(value: string) {
@@ -406,5 +380,5 @@ function formatLabel(value: string) {
     .split("_")
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ")
+    .join(" ");
 }

@@ -1,23 +1,19 @@
-"use client"
+"use client";
 
-import { FormEvent, useEffect, useState } from "react"
+import { FormEvent, useEffect, useState } from "react";
 import {
   Building2Icon,
+  MailPlusIcon,
   MessageSquareIcon,
   MoreHorizontalIcon,
   PlusIcon,
+  ShieldIcon,
   UserIcon,
-} from "lucide-react"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+} from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -25,7 +21,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,14 +30,9 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
+} from "@/components/ui/dropdown-menu";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -49,8 +40,8 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Spinner } from "@/components/ui/spinner"
+} from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -58,15 +49,26 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "@/components/ui/table";
 import {
   deleteAgentLlmSettings,
   getAgentLlmSettings,
+  getOrganizationMembers,
+  inviteOrganizationMember,
+  removeOrganizationMember,
+  revokeOrganizationInvitation,
   saveAgentLlmSettings,
   setDefaultAgentLlmSettings,
   sendSlackTestMessage,
-} from "@/lib/api"
-import type { AgentLlmSettings, Organization, User } from "@/lib/dashboard-types"
+  updateOrganizationMemberRole,
+} from "@/lib/api";
+import type {
+  AgentLlmSettings,
+  Organization,
+  OrganizationInvitation,
+  OrganizationMember,
+  User,
+} from "@/lib/dashboard-types";
 
 const llmModels: Record<AgentLlmSettings["provider"], string[]> = {
   openai: [
@@ -98,25 +100,31 @@ const llmModels: Record<AgentLlmSettings["provider"], string[]> = {
     "claude-opus-4-1",
     "claude-opus-4-20250514",
   ],
+};
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value));
 }
 
-export function SettingsPageHeader({
-  title,
-  description,
-}: {
-  title: string
-  description: string
-}) {
+function formatInviteStatus(status: OrganizationInvitation["status"]) {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+export function SettingsPageHeader({ title, description }: { title: string; description: string }) {
   return (
     <div className="flex flex-col gap-2">
       <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
       <p className="text-muted-foreground">{description}</p>
     </div>
-  )
+  );
 }
 
 export function ProfileSettings({ user }: { user: User }) {
-  const displayName = user.name ?? user.github_login
+  const displayName = user.name ?? user.github_login;
 
   return (
     <Card>
@@ -145,81 +153,433 @@ export function ProfileSettings({ user }: { user: User }) {
         </FieldGroup>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 export function OrganizationSettings({
   organization,
+  user,
 }: {
-  organization?: Organization
+  organization?: Organization;
+  user: User;
 }) {
+  const [members, setMembers] = useState<OrganizationMember[]>([]);
+  const [invitations, setInvitations] = useState<OrganizationInvitation[]>([]);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<"admin" | "member">("member");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const organizationId = organization?.id;
+  const canManage = organization?.role === "owner" || organization?.role === "admin";
+  const canManageRoles = organization?.role === "owner";
+
+  const loadMembers = async () => {
+    if (!organization) return;
+    setLoading(true);
+    setError("");
+    try {
+      const result = await getOrganizationMembers(organization.id);
+      setMembers(result.members);
+      setInvitations(result.invitations);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load organization members.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!organizationId) return;
+    const load = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const result = await getOrganizationMembers(organizationId);
+        setMembers(result.members);
+        setInvitations(result.invitations);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not load organization members.");
+      } finally {
+        setLoading(false);
+      }
+    };
+    void load();
+  }, [organizationId]);
+
+  const handleInvite = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!organization || !email.trim()) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await inviteOrganizationMember({
+        organizationId: organization.id,
+        email,
+        role,
+      });
+      setEmail("");
+      setRole("member");
+      await loadMembers();
+      setMessage("Invitation email sent.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not send the invitation.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRoleChange = async (member: OrganizationMember, nextRole: "admin" | "member") => {
+    if (!organization || member.role === nextRole) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await updateOrganizationMemberRole({
+        organizationId: organization.id,
+        userId: member.user_id,
+        role: nextRole,
+      });
+      await loadMembers();
+      setMessage(`@${member.github_login} is now ${nextRole}.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update member role.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemove = async (member: OrganizationMember) => {
+    if (!organization) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await removeOrganizationMember(organization.id, member.user_id);
+      await loadMembers();
+      setMessage(`@${member.github_login} removed.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not remove member.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRevoke = async (invitation: OrganizationInvitation) => {
+    if (!organization) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await revokeOrganizationInvitation(organization.id, invitation.id);
+      await loadMembers();
+      setMessage(`Invitation to ${invitation.email} revoked.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not revoke invitation.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Building2Icon />
-          Organization
-        </CardTitle>
-        <CardDescription>
-          Current workspace context for provider credentials, imports, and agent
-          answers.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="organization-name">Organization</FieldLabel>
-            <Input
-              id="organization-name"
-              value={organization?.name ?? "No organization selected"}
-              readOnly
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="workspace-name">Default workspace</FieldLabel>
-            <Input
-              id="workspace-name"
-              value={organization?.default_workspace.name ?? "None"}
-              readOnly
-            />
-            <FieldDescription>
-              Provider-reported data and future agent tools remain scoped to this
-              organization.
-            </FieldDescription>
-          </Field>
-        </FieldGroup>
-      </CardContent>
-    </Card>
-  )
+    <div className="flex flex-col gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Building2Icon />
+            Organization
+          </CardTitle>
+          <CardDescription>
+            Current workspace context for provider credentials, imports, and agent answers.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="organization-name">Organization</FieldLabel>
+              <Input
+                id="organization-name"
+                value={organization?.name ?? "No organization selected"}
+                readOnly
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="workspace-name">Default workspace</FieldLabel>
+              <Input
+                id="workspace-name"
+                value={organization?.default_workspace.name ?? "None"}
+                readOnly
+              />
+              <FieldDescription>
+                Provider-reported data and future agent tools remain scoped to this organization.
+              </FieldDescription>
+            </Field>
+          </FieldGroup>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-1.5">
+              <CardTitle className="flex items-center gap-2">
+                <ShieldIcon />
+                Members
+              </CardTitle>
+              <CardDescription>Invite teammates and manage organization roles.</CardDescription>
+            </div>
+            {loading && (
+              <div className="text-muted-foreground flex items-center gap-2 text-sm">
+                <Spinner />
+                Loading
+              </div>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          {message && (
+            <Alert>
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          )}
+          <form onSubmit={handleInvite} className="flex flex-col gap-4">
+            <FieldGroup className="md:grid md:grid-cols-[1fr_160px_auto] md:items-end">
+              <Field>
+                <FieldLabel htmlFor="invite-email">Invite by email</FieldLabel>
+                <Input
+                  id="invite-email"
+                  type="email"
+                  value={email}
+                  placeholder="teammate@example.com"
+                  disabled={!canManage || saving || !organization}
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="invite-role">Role</FieldLabel>
+                <Select
+                  value={role}
+                  onValueChange={(value) => setRole(value as "admin" | "member")}
+                  disabled={!canManage || saving || !organization}
+                >
+                  <SelectTrigger id="invite-role">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="member">Member</SelectItem>
+                      <SelectItem value="admin">Admin</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Button
+                type="submit"
+                disabled={!canManage || saving || !organization || !email.trim()}
+              >
+                {saving ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <MailPlusIcon data-icon="inline-start" />
+                )}
+                Invite
+              </Button>
+            </FieldGroup>
+          </form>
+
+          <div className="overflow-hidden rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Joined</TableHead>
+                  <TableHead className="w-12">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {members.length ? (
+                  members.map((member) => (
+                    <TableRow key={member.user_id}>
+                      <TableCell className="font-medium">
+                        {member.name ?? `@${member.github_login}`}
+                      </TableCell>
+                      <TableCell>
+                        {member.primary_email ?? (
+                          <span className="text-muted-foreground">Not shared</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {member.role === "owner" ? (
+                          <Badge variant="secondary">Owner</Badge>
+                        ) : canManageRoles ? (
+                          <Select
+                            value={member.role}
+                            onValueChange={(value) =>
+                              void handleRoleChange(member, value as "admin" | "member")
+                            }
+                            disabled={saving}
+                          >
+                            <SelectTrigger className="h-8 w-32">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectGroup>
+                                <SelectItem value="member">Member</SelectItem>
+                                <SelectItem value="admin">Admin</SelectItem>
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Badge variant="outline">
+                            {member.role === "admin" ? "Admin" : "Member"}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>{formatDate(member.created_at)}</TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              disabled={
+                                saving ||
+                                member.user_id === user.id ||
+                                member.role === "owner" ||
+                                !canManage
+                              }
+                            >
+                              <MoreHorizontalIcon />
+                              <span className="sr-only">
+                                Open actions for {member.github_login}
+                              </span>
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                            <DropdownMenuGroup>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onSelect={() => void handleRemove(member)}
+                              >
+                                Remove member
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-24 text-center">
+                      No members found.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div className="overflow-hidden rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Invitation</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Expires</TableHead>
+                  <TableHead className="w-12">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {invitations.length ? (
+                  invitations.map((invitation) => (
+                    <TableRow key={invitation.id}>
+                      <TableCell className="font-medium">{invitation.email}</TableCell>
+                      <TableCell>{invitation.role === "admin" ? "Admin" : "Member"}</TableCell>
+                      <TableCell>
+                        <Badge variant={invitation.status === "pending" ? "secondary" : "outline"}>
+                          {formatInviteStatus(invitation.status)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{formatDate(invitation.expires_at)}</TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={!canManage || saving || invitation.status !== "pending"}
+                          onClick={() => void handleRevoke(invitation)}
+                        >
+                          Revoke
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-24 text-center">
+                      No outstanding invitations.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          {!canManage && (
+            <Alert>
+              <AlertDescription>
+                Organization owner or admin access is required to invite or remove members.
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
 
 export function SlackSettings({
   organizationId,
   canManage,
 }: {
-  organizationId?: string
-  canManage: boolean
+  organizationId?: string;
+  canManage: boolean;
 }) {
-  const [sending, setSending] = useState(false)
-  const [error, setError] = useState("")
-  const [message, setMessage] = useState("")
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   const handleSendTestMessage = async () => {
-    if (!organizationId) return
-    setSending(true)
-    setError("")
-    setMessage("")
+    if (!organizationId) return;
+    setSending(true);
+    setError("");
+    setMessage("");
     try {
-      const result = await sendSlackTestMessage(organizationId)
-      setMessage(`Test message sent to Slack channel ${result.channel_id}.`)
+      const result = await sendSlackTestMessage(organizationId);
+      setMessage(`Test message sent to Slack channel ${result.channel_id}.`);
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "Could not send the Slack test message.",
-      )
+      setError(e instanceof Error ? e.message : "Could not send the Slack test message.");
     } finally {
-      setSending(false)
+      setSending(false);
     }
-  }
+  };
 
   return (
     <Card>
@@ -231,8 +591,7 @@ export function SlackSettings({
               Slack
             </CardTitle>
             <CardDescription>
-              Verify that Bella can post incident handoffs to the configured
-              Slack channel.
+              Verify that Bella can post incident handoffs to the configured Slack channel.
             </CardDescription>
           </div>
           <Button
@@ -248,9 +607,8 @@ export function SlackSettings({
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <p className="text-muted-foreground text-sm">
-          Bella reads the bot token and destination channel from the local
-          server configuration. This test does not expose or store Slack
-          credentials in the dashboard.
+          Bella reads the bot token and destination channel from the local server configuration.
+          This test does not expose or store Slack credentials in the dashboard.
         </p>
         {error && (
           <Alert variant="destructive">
@@ -265,89 +623,88 @@ export function SlackSettings({
         {!canManage && (
           <Alert>
             <AlertDescription>
-              Organization owner or admin access is required to send a Slack
-              test message.
+              Organization owner or admin access is required to send a Slack test message.
             </AlertDescription>
           </Alert>
         )}
       </CardContent>
     </Card>
-  )
+  );
 }
 
 export function ByokSettings({
   organizationId,
   canManage,
 }: {
-  organizationId?: string
-  canManage: boolean
+  organizationId?: string;
+  canManage: boolean;
 }) {
-  const [provider, setProvider] = useState<AgentLlmSettings["provider"]>()
-  const [model, setModel] = useState("")
-  const [displayName, setDisplayName] = useState("")
-  const [apiKey, setApiKey] = useState("")
-  const [items, setItems] = useState<AgentLlmSettings[]>([])
-  const [editingId, setEditingId] = useState<string | undefined>()
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [removing, setRemoving] = useState(false)
-  const [settingDefault, setSettingDefault] = useState(false)
-  const [error, setError] = useState("")
-  const [message, setMessage] = useState("")
-  const configured = items.length > 0
-  const editing = items.find((item) => item.id === editingId)
+  const [provider, setProvider] = useState<AgentLlmSettings["provider"]>();
+  const [model, setModel] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [items, setItems] = useState<AgentLlmSettings[]>([]);
+  const [editingId, setEditingId] = useState<string | undefined>();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [settingDefault, setSettingDefault] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const configured = items.length > 0;
+  const editing = items.find((item) => item.id === editingId);
 
   const setProviderAndDefaultModel = (value: AgentLlmSettings["provider"]) => {
-    setProvider(value)
-    setModel("")
-  }
+    setProvider(value);
+    setModel("");
+  };
 
   const resetForm = () => {
-    setEditingId(undefined)
-    setProvider(undefined)
-    setModel("")
-    setDisplayName("")
-    setApiKey("")
-  }
+    setEditingId(undefined);
+    setProvider(undefined);
+    setModel("");
+    setDisplayName("");
+    setApiKey("");
+  };
 
   const loadSettings = async () => {
-    if (!organizationId) return
-    setLoading(true)
-    setError("")
+    if (!organizationId) return;
+    setLoading(true);
+    setError("");
     try {
-      const settings = await getAgentLlmSettings(organizationId)
-      setItems(settings.items ?? [])
+      const settings = await getAgentLlmSettings(organizationId);
+      setItems(settings.items ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load AI settings.")
+      setError(e instanceof Error ? e.message : "Could not load AI settings.");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    if (!organizationId) return
+    if (!organizationId) return;
     const load = async () => {
-      setLoading(true)
-      setError("")
+      setLoading(true);
+      setError("");
       try {
-        const settings = await getAgentLlmSettings(organizationId)
-        setItems(settings.items ?? [])
+        const settings = await getAgentLlmSettings(organizationId);
+        setItems(settings.items ?? []);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not load AI settings.")
+        setError(e instanceof Error ? e.message : "Could not load AI settings.");
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
-    }
-    void load()
-  }, [organizationId])
+    };
+    void load();
+  }, [organizationId]);
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!organizationId || !provider || !model) return
-    setSaving(true)
-    setError("")
-    setMessage("")
+    event.preventDefault();
+    if (!organizationId || !provider || !model) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
     try {
       const settings = await saveAgentLlmSettings({
         organizationId,
@@ -357,84 +714,79 @@ export function ByokSettings({
         model,
         apiKey,
         isDefault: !configured || Boolean(editing?.is_default),
-      })
-      await loadSettings()
-      resetForm()
-      setDialogOpen(false)
-      setMessage(`${settings.display_name} saved.`)
+      });
+      await loadSettings();
+      resetForm();
+      setDialogOpen(false);
+      setMessage(`${settings.display_name} saved.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save AI settings.")
+      setError(e instanceof Error ? e.message : "Could not save AI settings.");
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
-  }
+  };
 
   const handleRemove = async (settingId: string) => {
-    if (!organizationId) return
-    setRemoving(true)
-    setError("")
-    setMessage("")
+    if (!organizationId) return;
+    setRemoving(true);
+    setError("");
+    setMessage("");
     try {
-      await deleteAgentLlmSettings(organizationId, settingId)
-      await loadSettings()
-      if (editingId === settingId) resetForm()
-      setMessage("BYOK model removed.")
+      await deleteAgentLlmSettings(organizationId, settingId);
+      await loadSettings();
+      if (editingId === settingId) resetForm();
+      setMessage("BYOK model removed.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not remove AI settings.")
+      setError(e instanceof Error ? e.message : "Could not remove AI settings.");
     } finally {
-      setRemoving(false)
+      setRemoving(false);
     }
-  }
+  };
 
   const handleSetDefault = async (settingId: string) => {
-    if (!organizationId) return
-    setSettingDefault(true)
-    setError("")
-    setMessage("")
+    if (!organizationId) return;
+    setSettingDefault(true);
+    setError("");
+    setMessage("");
     try {
-      const settings = await setDefaultAgentLlmSettings(organizationId, settingId)
-      await loadSettings()
-      setMessage(`${settings.display_name} is now the default Bella model.`)
+      const settings = await setDefaultAgentLlmSettings(organizationId, settingId);
+      await loadSettings();
+      setMessage(`${settings.display_name} is now the default Bella model.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not set default AI model.")
+      setError(e instanceof Error ? e.message : "Could not set default AI model.");
     } finally {
-      setSettingDefault(false)
+      setSettingDefault(false);
     }
-  }
+  };
 
   const handleEdit = (item: AgentLlmSettings) => {
-    setEditingId(item.id)
-    setDisplayName(item.display_name)
-    setProvider(item.provider)
+    setEditingId(item.id);
+    setDisplayName(item.display_name);
+    setProvider(item.provider);
     setModel(
-      llmModels[item.provider].includes(item.model)
-        ? item.model
-        : llmModels[item.provider][0],
-    )
-    setApiKey("")
-    setMessage("")
-    setError("")
-    setDialogOpen(true)
-  }
+      llmModels[item.provider].includes(item.model) ? item.model : llmModels[item.provider][0],
+    );
+    setApiKey("");
+    setMessage("");
+    setError("");
+    setDialogOpen(true);
+  };
 
   const handleAdd = () => {
-    resetForm()
-    setMessage("")
-    setError("")
-    setDialogOpen(true)
-  }
+    resetForm();
+    setMessage("");
+    setError("");
+    setDialogOpen(true);
+  };
 
   return (
     <Card>
       <CardHeader>
         <div className="flex items-start justify-between gap-4">
           <div className="flex flex-col gap-1.5">
-            <CardTitle className="flex items-center gap-2">
-              Bring your own key
-            </CardTitle>
+            <CardTitle className="flex items-center gap-2">Bring your own key</CardTitle>
             <CardDescription>
-              Configure the organization-owned LLM credentials Bella should use
-              for the agent.
+              Configure the organization-owned LLM credentials Bella should use for the agent.
             </CardDescription>
           </div>
           <Button
@@ -483,9 +835,7 @@ export function ByokSettings({
               {items.length ? (
                 items.map((item) => (
                   <TableRow key={item.id}>
-                    <TableCell className="font-medium">
-                      {item.display_name}
-                    </TableCell>
+                    <TableCell className="font-medium">{item.display_name}</TableCell>
                     <TableCell>{item.provider}</TableCell>
                     <TableCell>{item.model}</TableCell>
                     <TableCell>{item.credential_fingerprint}</TableCell>
@@ -506,9 +856,7 @@ export function ByokSettings({
                             disabled={!canManage || saving || removing || settingDefault}
                           >
                             <MoreHorizontalIcon />
-                            <span className="sr-only">
-                              Open actions for {item.display_name}
-                            </span>
+                            <span className="sr-only">Open actions for {item.display_name}</span>
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
@@ -554,8 +902,7 @@ export function ByokSettings({
         {!canManage && (
           <Alert>
             <AlertDescription>
-              Organization owner or admin access is required to edit BYOK
-              settings.
+              Organization owner or admin access is required to edit BYOK settings.
             </AlertDescription>
           </Alert>
         )}
@@ -563,16 +910,15 @@ export function ByokSettings({
       <Dialog
         open={dialogOpen}
         onOpenChange={(open) => {
-          setDialogOpen(open)
-          if (!open) resetForm()
+          setDialogOpen(open);
+          if (!open) resetForm();
         }}
       >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? "Edit key" : "Add key"}</DialogTitle>
             <DialogDescription>
-              Choose a provider, select the model Bella should call, then paste
-              the key.
+              Choose a provider, select the model Bella should call, then paste the key.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSave} className="flex flex-col gap-4">
@@ -582,9 +928,7 @@ export function ByokSettings({
                 <Select
                   value={provider}
                   onValueChange={(value) =>
-                    setProviderAndDefaultModel(
-                      value as AgentLlmSettings["provider"],
-                    )
+                    setProviderAndDefaultModel(value as AgentLlmSettings["provider"])
                   }
                   disabled={!canManage || saving || removing}
                 >
@@ -611,17 +955,17 @@ export function ByokSettings({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
-                      {provider && llmModels[provider].map((model) => (
-                        <SelectItem key={model} value={model}>
-                          {model}
-                        </SelectItem>
-                      ))}
+                      {provider &&
+                        llmModels[provider].map((modelName) => (
+                          <SelectItem key={modelName} value={modelName}>
+                            {modelName}
+                          </SelectItem>
+                        ))}
                     </SelectGroup>
                   </SelectContent>
                 </Select>
                 <FieldDescription>
-                  API keys authenticate the provider account; Bella still needs
-                  the model to call.
+                  API keys authenticate the provider account; Bella still needs the model to call.
                 </FieldDescription>
               </Field>
               <Field>
@@ -648,9 +992,7 @@ export function ByokSettings({
                   disabled={!canManage || saving || removing}
                   onChange={(event) => setDisplayName(event.target.value)}
                 />
-                <FieldDescription>
-                  Optional. If empty, Bella shows the model name.
-                </FieldDescription>
+                <FieldDescription>Optional. If empty, Bella shows the model name.</FieldDescription>
               </Field>
             </FieldGroup>
             <DialogFooter>
@@ -664,12 +1006,7 @@ export function ByokSettings({
               </Button>
               <Button
                 disabled={
-                  !canManage ||
-                  saving ||
-                  removing ||
-                  !organizationId ||
-                  !provider ||
-                  !model
+                  !canManage || saving || removing || !organizationId || !provider || !model
                 }
               >
                 {saving && <Spinner data-icon="inline-start" />}
@@ -680,5 +1017,5 @@ export function ByokSettings({
         </DialogContent>
       </Dialog>
     </Card>
-  )
+  );
 }

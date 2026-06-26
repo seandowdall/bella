@@ -1,28 +1,26 @@
-"use client"
+"use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AssistantRuntimeProvider,
   useLocalRuntime,
   type ChatModelAdapter,
   type ThreadMessage,
-} from "@assistant-ui/react"
-import { BotIcon } from "lucide-react"
-import {
-  ModelSelector,
-  type ModelOption,
-} from "@/components/assistant-ui/model-selector"
-import { Thread } from "@/components/assistant-ui/thread"
-import { getAgentLlmSettings, sendAgentMessage } from "@/lib/api"
-import { useAuth } from "@/lib/auth-context"
-import type { AgentLlmSettings } from "@/lib/dashboard-types"
+} from "@assistant-ui/react";
+import { BotIcon } from "lucide-react";
+import { ModelSelector, type ModelOption } from "@/components/assistant-ui/model-selector";
+import { Thread } from "@/components/assistant-ui/thread";
+import { getAgentLlmSettings, sendAgentMessage } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import type { AgentLlmSettings } from "@/lib/dashboard-types";
+import { useAiCostVisibilityFlag } from "@/lib/feature-flags";
 
 const suggestions = [
   { prompt: "Summarize AI spend for the last 30 days" },
   { prompt: "Break down spend by provider" },
   { prompt: "Show model usage trends" },
   { prompt: "Check provider sync freshness" },
-]
+];
 
 const slashCommands: Record<string, string> = {
   "/summary": "Summarize AI spend for the last 30 days",
@@ -32,38 +30,37 @@ const slashCommands: Record<string, string> = {
   "/sync": "Check provider sync freshness",
   "/help":
     "Show the Bella chat commands for spend, provider usage, model breakdowns, and sync freshness",
-}
+};
 
 export default function HomePage() {
-  const { selectedOrganization } = useAuth()
-  const [models, setModels] = useState<AgentLlmSettings[]>([])
-  const [modelId, setModelId] = useState<string>()
-  const [modelError, setModelError] = useState("")
+  const { selectedOrganization } = useAuth();
+  const { enabled: costVisibilityEnabled } = useAiCostVisibilityFlag();
+  const [models, setModels] = useState<AgentLlmSettings[]>([]);
+  const [modelId, setModelId] = useState<string>();
+  const [modelError, setModelError] = useState("");
 
   useEffect(() => {
-    if (!selectedOrganization) return
-    let cancelled = false
+    if (!selectedOrganization) return;
+    let cancelled = false;
 
     const loadModels = async () => {
       try {
-        const settings = await getAgentLlmSettings(selectedOrganization.id)
-        if (cancelled) return
-        setModels(settings.items)
-        setModelId((current) => current ?? settings.default_id ?? undefined)
+        const settings = await getAgentLlmSettings(selectedOrganization.id);
+        if (cancelled) return;
+        setModels(settings.items);
+        setModelId((current) => current ?? settings.default_id ?? undefined);
       } catch (error) {
-        if (cancelled) return
-        setModelError(
-          error instanceof Error ? error.message : "Could not load AI settings.",
-        )
+        if (cancelled) return;
+        setModelError(error instanceof Error ? error.message : "Could not load AI settings.");
       }
-    }
+    };
 
-    void loadModels()
+    void loadModels();
 
     return () => {
-      cancelled = true
-    }
-  }, [selectedOrganization])
+      cancelled = true;
+    };
+  }, [selectedOrganization]);
 
   const modelOptions = useMemo<ModelOption[]>(
     () =>
@@ -75,10 +72,13 @@ export default function HomePage() {
         keywords: [model.provider, model.model],
       })),
     [models],
-  )
+  );
 
   return (
-    <BellaRuntimeProvider organizationId={selectedOrganization?.id}>
+    <BellaRuntimeProvider
+      organizationId={selectedOrganization?.id}
+      costVisibilityEnabled={costVisibilityEnabled}
+    >
       <div className="-m-4 flex min-h-[calc(100svh-var(--header-height))] flex-1 flex-col bg-black lg:-m-6">
         <Thread
           components={{
@@ -89,20 +89,25 @@ export default function HomePage() {
                 onValueChange={setModelId}
               />
             ),
-            Welcome: () => <BellaWelcome error={modelError} />,
+            Welcome: () => (
+              <BellaWelcome costVisibilityEnabled={costVisibilityEnabled} error={modelError} />
+            ),
           }}
+          costVisibilityEnabled={costVisibilityEnabled}
         />
       </div>
     </BellaRuntimeProvider>
-  )
+  );
 }
 
 function BellaRuntimeProvider({
   organizationId,
+  costVisibilityEnabled,
   children,
 }: {
-  organizationId?: string
-  children: ReactNode
+  organizationId?: string;
+  costVisibilityEnabled: boolean;
+  children: ReactNode;
 }) {
   const adapter = useMemo<ChatModelAdapter>(
     () => ({
@@ -115,19 +120,19 @@ function BellaRuntimeProvider({
                 text: "Select an organization before asking Bella a question.",
               },
             ],
-          }
+          };
         }
 
-        abortSignal.throwIfAborted()
-        const message = normalizePrompt(lastTextMessage(messages))
-        const modelName = context.config?.modelName
-        const llmSettingId = typeof modelName === "string" ? modelName : undefined
+        abortSignal.throwIfAborted();
+        const message = normalizePrompt(lastTextMessage(messages), costVisibilityEnabled);
+        const modelName = context.config?.modelName;
+        const llmSettingId = typeof modelName === "string" ? modelName : undefined;
         const response = await sendAgentMessage({
           organizationId,
           message,
           llmSettingId,
           signal: abortSignal,
-        })
+        });
 
         return {
           content: [{ type: "text", text: response.answer }],
@@ -140,25 +145,21 @@ function BellaRuntimeProvider({
               suggestions: response.suggestions,
             },
           },
-        }
+        };
       },
     }),
-    [organizationId],
-  )
+    [costVisibilityEnabled, organizationId],
+  );
 
   const runtime = useLocalRuntime(adapter, {
     adapters: {
       suggestion: {
-        generate: async () => suggestions,
+        generate: async () => (costVisibilityEnabled ? suggestions : []),
       },
     },
-  })
+  });
 
-  return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      {children}
-    </AssistantRuntimeProvider>
-  )
+  return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
 }
 
 function BellaModelSelector({
@@ -166,11 +167,11 @@ function BellaModelSelector({
   value,
   onValueChange,
 }: {
-  models: ModelOption[]
-  value?: string
-  onValueChange: (value: string) => void
+  models: ModelOption[];
+  value?: string;
+  onValueChange: (value: string) => void;
 }) {
-  if (!models.length) return null
+  if (!models.length) return null;
 
   return (
     <ModelSelector
@@ -183,34 +184,44 @@ function BellaModelSelector({
       className="text-muted-foreground hover:text-foreground"
       contentClassName="w-80"
     />
-  )
+  );
 }
 
-function BellaWelcome({ error }: { error?: string }) {
+function BellaWelcome({
+  costVisibilityEnabled,
+  error,
+}: {
+  costVisibilityEnabled: boolean;
+  error?: string;
+}) {
   return (
     <div className="mb-6 flex flex-col items-center px-4 text-center">
       <p className="mb-2 text-sm font-medium tracking-[0.18em] text-muted-foreground uppercase">
         Bella
       </p>
       <h1 className="text-2xl font-semibold tracking-tight">
-        Ask about AI spend, models, providers, and sync health.
+        {costVisibilityEnabled
+          ? "Ask about AI spend, models, providers, and sync health."
+          : "Ask Bella to investigate incidents and operational health."}
       </h1>
       {error && <p className="mt-3 text-sm text-muted-foreground">{error}</p>}
     </div>
-  )
+  );
 }
 
 function lastTextMessage(messages: readonly ThreadMessage[]) {
-  const message = messages.findLast((item) => item.role === "user")
-  if (!message) return ""
+  const message = messages.findLast((item) => item.role === "user");
+  if (!message) return "";
 
   return message.content
     .filter((part) => part.type === "text")
     .map((part) => part.text)
-    .join("\n")
+    .join("\n");
 }
 
-function normalizePrompt(prompt: string) {
-  const trimmed = prompt.trim()
-  return slashCommands[trimmed.toLowerCase()] ?? trimmed
+function normalizePrompt(prompt: string, costVisibilityEnabled: boolean) {
+  const trimmed = prompt.trim();
+  if (!costVisibilityEnabled) return trimmed;
+
+  return slashCommands[trimmed.toLowerCase()] ?? trimmed;
 }
