@@ -79,7 +79,7 @@ export default function HomePage() {
       organizationId={selectedOrganization?.id}
       costVisibilityEnabled={costVisibilityEnabled}
     >
-      <div className="-m-4 flex min-h-[calc(100svh-var(--header-height))] flex-1 flex-col bg-black lg:-m-6">
+      <div className="-m-4 flex min-h-[calc(100svh-var(--header-height))] flex-1 flex-col bg-background lg:-m-6">
         <Thread
           components={{
             ComposerAccessory: () => (
