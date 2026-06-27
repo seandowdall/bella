@@ -3,6 +3,12 @@ name = "bella-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Command-line client for Bella, an AI cost visibility platform."
+repository = "https://github.com/seandowdall/bella"
+homepage = "https://bellalabs.ai"
+readme = "../../README.md"
+keywords = ["ai", "cost", "observability", "cli"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "bella"

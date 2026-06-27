@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 
@@ -18,15 +18,41 @@ struct Cli {
     #[arg(
         long,
         env = "BELLA_API_BASE_URL",
-        default_value = "http://127.0.0.1:3000"
+        help = "Bella API base URL; overrides --environment"
     )]
-    api_base_url: String,
+    api_base_url: Option<String>,
+
+    #[arg(
+        long,
+        env = "BELLA_ENVIRONMENT",
+        value_enum,
+        default_value_t = Environment::Prod,
+        help = "Hosted Bella environment to use when --api-base-url is omitted"
+    )]
+    environment: Environment,
 
     #[arg(long, global = true, help = "Print machine-readable JSON")]
     json: bool,
 
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Environment {
+    Prod,
+    Qa,
+    Local,
+}
+
+impl Environment {
+    fn api_base_url(self) -> &'static str {
+        match self {
+            Self::Prod => "https://api.bella.md",
+            Self::Qa => "https://api.qa.bella.md",
+            Self::Local => "http://127.0.0.1:3000",
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -359,13 +385,16 @@ enum LoginPollResponse {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let credentials_path = credentials_path()?;
+    let api_base_url = cli
+        .api_base_url
+        .unwrap_or_else(|| cli.environment.api_base_url().to_owned());
 
     match cli.command {
         Command::Config => {
             let output = ConfigOutput {
-                api_base_url: &cli.api_base_url,
+                api_base_url: &api_base_url,
                 authenticated: load_credentials(&credentials_path)
-                    .is_some_and(|credentials| credentials.api_base_url == cli.api_base_url),
+                    .is_some_and(|credentials| credentials.api_base_url == api_base_url),
                 credentials_path: credentials_path.display().to_string(),
             };
             print_value(&output, cli.json, || {
@@ -380,14 +409,14 @@ async fn main() -> anyhow::Result<()> {
                 "Note: `bella catalog` lists supported provider types. \
                  Use `bella providers accounts` to list connected accounts."
             );
-            print_provider_catalog(&cli.api_base_url, cli.json).await?;
+            print_provider_catalog(&api_base_url, cli.json).await?;
         }
         Command::Login { no_open } => {
-            login(&cli.api_base_url, &credentials_path, no_open, cli.json).await?;
+            login(&api_base_url, &credentials_path, no_open, cli.json).await?;
         }
         Command::Whoami => {
-            let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
-            let user = fetch_user(&cli.api_base_url, &credentials.token).await?;
+            let credentials = require_credentials(&credentials_path, &api_base_url)?;
+            let user = fetch_user(&api_base_url, &credentials.token).await?;
             print_value(&user, cli.json, || {
                 user.name
                     .as_ref()
@@ -397,9 +426,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Logout => {
             if let Some(credentials) = load_credentials(&credentials_path)
-                && credentials.api_base_url == cli.api_base_url
+                && credentials.api_base_url == api_base_url
             {
-                revoke_token(&cli.api_base_url, &credentials.token).await?;
+                revoke_token(&api_base_url, &credentials.token).await?;
             }
             if credentials_path.exists() {
                 fs::remove_file(&credentials_path)
@@ -412,11 +441,11 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Organizations { command } => {
-            let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+            let credentials = require_credentials(&credentials_path, &api_base_url)?;
             match command {
                 OrganizationCommand::List => {
                     let organizations =
-                        list_organizations(&cli.api_base_url, &credentials.token).await?;
+                        list_organizations(&api_base_url, &credentials.token).await?;
                     print_value(&organizations, cli.json, || {
                         organizations
                             .iter()
@@ -439,7 +468,7 @@ async fn main() -> anyhow::Result<()> {
                 } => {
                     let idempotency_key = idempotency_key.unwrap_or_else(random_secret);
                     let organization = create_organization(
-                        &cli.api_base_url,
+                        &api_base_url,
                         &credentials.token,
                         &name,
                         &idempotency_key,
@@ -458,15 +487,15 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Providers { command } => match command {
             ProviderCommand::Catalog => {
-                print_provider_catalog(&cli.api_base_url, cli.json).await?;
+                print_provider_catalog(&api_base_url, cli.json).await?;
             }
             ProviderCommand::List { organization } => {
-                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let credentials = require_credentials(&credentials_path, &api_base_url)?;
                 let organization =
-                    resolve_organization_id(&cli.api_base_url, &credentials.token, organization)
+                    resolve_organization_id(&api_base_url, &credentials.token, organization)
                         .await?;
                 let accounts =
-                    list_provider_accounts(&cli.api_base_url, &credentials.token, &organization)
+                    list_provider_accounts(&api_base_url, &credentials.token, &organization)
                         .await?;
                 print_value(&accounts, cli.json, || {
                     accounts
@@ -493,10 +522,10 @@ async fn main() -> anyhow::Result<()> {
                 secret,
                 secret_stdin,
             } => {
-                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let credentials = require_credentials(&credentials_path, &api_base_url)?;
                 let secret = read_provider_secret(secret, secret_stdin)?;
                 let account = connect_provider(
-                    &cli.api_base_url,
+                    &api_base_url,
                     &credentials.token,
                     &organization,
                     &workspace,
@@ -516,14 +545,9 @@ async fn main() -> anyhow::Result<()> {
                 organization,
                 account,
             } => {
-                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
-                disconnect_provider(
-                    &cli.api_base_url,
-                    &credentials.token,
-                    &organization,
-                    &account,
-                )
-                .await?;
+                let credentials = require_credentials(&credentials_path, &api_base_url)?;
+                disconnect_provider(&api_base_url, &credentials.token, &organization, &account)
+                    .await?;
                 if cli.json {
                     println!(
                         "{}",
@@ -537,14 +561,10 @@ async fn main() -> anyhow::Result<()> {
                 organization,
                 account,
             } => {
-                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
-                let outcome = sync_provider(
-                    &cli.api_base_url,
-                    &credentials.token,
-                    &organization,
-                    &account,
-                )
-                .await?;
+                let credentials = require_credentials(&credentials_path, &api_base_url)?;
+                let outcome =
+                    sync_provider(&api_base_url, &credentials.token, &organization, &account)
+                        .await?;
                 print_value(&outcome, cli.json, || {
                     format!(
                         "Synced {} account {}: {} usage buckets, {} cost snapshots.",
@@ -558,12 +578,12 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Integrations { command } => match command {
             IntegrationCommand::List { organization } => {
-                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let credentials = require_credentials(&credentials_path, &api_base_url)?;
                 let organization =
-                    resolve_organization_id(&cli.api_base_url, &credentials.token, organization)
+                    resolve_organization_id(&api_base_url, &credentials.token, organization)
                         .await?;
                 let integrations =
-                    list_integrations(&cli.api_base_url, &credentials.token, &organization).await?;
+                    list_integrations(&api_base_url, &credentials.token, &organization).await?;
                 print_value(&integrations, cli.json, || {
                     integrations
                         .iter()
@@ -596,13 +616,13 @@ async fn main() -> anyhow::Result<()> {
                         public_api_url,
                     },
             } => {
-                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let credentials = require_credentials(&credentials_path, &api_base_url)?;
                 let organization =
-                    resolve_organization_id(&cli.api_base_url, &credentials.token, organization)
+                    resolve_organization_id(&api_base_url, &credentials.token, organization)
                         .await?;
                 let api_token = read_optional_secret(api_token, api_token_stdin)?;
                 save_posthog_settings(
-                    &cli.api_base_url,
+                    &api_base_url,
                     &credentials.token,
                     &organization,
                     &name,
@@ -612,10 +632,9 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?;
                 let connection =
-                    rotate_posthog_secret(&cli.api_base_url, &credentials.token, &organization)
-                        .await?;
+                    rotate_posthog_secret(&api_base_url, &credentials.token, &organization).await?;
                 let webhook_url = format_posthog_webhook_url(
-                    public_api_url.as_deref().unwrap_or(&cli.api_base_url),
+                    public_api_url.as_deref().unwrap_or(&api_base_url),
                     &organization,
                 );
                 let output = PosthogConnectionOutput {
@@ -637,12 +656,11 @@ async fn main() -> anyhow::Result<()> {
             IntegrationCommand::Posthog {
                 command: PosthogCommand::Check { organization },
             } => {
-                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let credentials = require_credentials(&credentials_path, &api_base_url)?;
                 let organization =
-                    resolve_organization_id(&cli.api_base_url, &credentials.token, organization)
+                    resolve_organization_id(&api_base_url, &credentials.token, organization)
                         .await?;
-                let check =
-                    check_posthog(&cli.api_base_url, &credentials.token, &organization).await?;
+                let check = check_posthog(&api_base_url, &credentials.token, &organization).await?;
                 print_value(&check, cli.json, || {
                     format!(
                         "PostHog connection OK for project {} at {} (observed {} recent rows).",
@@ -653,12 +671,11 @@ async fn main() -> anyhow::Result<()> {
             IntegrationCommand::Posthog {
                 command: PosthogCommand::Sync { organization },
             } => {
-                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let credentials = require_credentials(&credentials_path, &api_base_url)?;
                 let organization =
-                    resolve_organization_id(&cli.api_base_url, &credentials.token, organization)
+                    resolve_organization_id(&api_base_url, &credentials.token, organization)
                         .await?;
-                let sync =
-                    sync_posthog(&cli.api_base_url, &credentials.token, &organization).await?;
+                let sync = sync_posthog(&api_base_url, &credentials.token, &organization).await?;
                 print_value(&sync, cli.json, || {
                     format!(
                         "PostHog sync {} completed: {} seen, {} upserted, {} new incident candidates.",
@@ -1209,7 +1226,76 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::read_provider_secret;
+    use std::{
+        fs,
+        io::{Read as _, Write as _},
+        net::{TcpListener, TcpStream},
+        thread,
+    };
+
+    use super::{Environment, load_credentials, login, random_secret, read_provider_secret};
+
+    struct TestServer {
+        base_url: String,
+        handle: thread::JoinHandle<anyhow::Result<()>>,
+    }
+
+    impl TestServer {
+        fn start() -> anyhow::Result<Self> {
+            let listener = TcpListener::bind("127.0.0.1:0")?;
+            let base_url = format!("http://{}", listener.local_addr()?);
+            let handle = thread::spawn(move || {
+                handle_connection(listener.accept()?.0, start_response())?;
+                handle_connection(listener.accept()?.0, poll_response())?;
+                Ok(())
+            });
+
+            Ok(Self { base_url, handle })
+        }
+
+        fn join(self) -> anyhow::Result<()> {
+            self.handle.join().expect("test server thread panicked")
+        }
+    }
+
+    fn handle_connection(mut stream: TcpStream, body: String) -> anyhow::Result<()> {
+        let mut buffer = [0_u8; 4096];
+        let bytes = stream.read(&mut buffer)?;
+        let request = String::from_utf8_lossy(&buffer[..bytes]);
+        assert!(request.starts_with("POST /v1/auth/cli/"));
+
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes())?;
+        Ok(())
+    }
+
+    fn start_response() -> String {
+        serde_json::json!({
+            "request_id": "test-request",
+            "verification_url": "https://github.com/login/oauth/authorize?client_id=test",
+            "expires_in": 1,
+            "interval": 0
+        })
+        .to_string()
+    }
+
+    fn poll_response() -> String {
+        serde_json::json!({
+            "status": "complete",
+            "token": "test-api-token",
+            "user": {
+                "id": "user_123",
+                "github_login": "octocat",
+                "name": "Octocat",
+                "avatar_url": null
+            }
+        })
+        .to_string()
+    }
 
     #[test]
     fn provider_secret_rejects_empty_or_conflicting_input() {
@@ -1219,5 +1305,33 @@ mod tests {
             read_provider_secret(Some(" secret \n".to_owned()), false).unwrap(),
             "secret"
         );
+    }
+
+    #[test]
+    fn environment_resolves_hosted_and_local_api_urls() {
+        assert_eq!(Environment::Prod.api_base_url(), "https://api.bella.md");
+        assert_eq!(Environment::Qa.api_base_url(), "https://api.qa.bella.md");
+        assert_eq!(Environment::Local.api_base_url(), "http://127.0.0.1:3000");
+    }
+
+    #[tokio::test]
+    async fn login_polls_until_complete_and_saves_credentials() {
+        let server = TestServer::start().unwrap();
+        let credentials_path = std::env::temp_dir()
+            .join("bella-cli-tests")
+            .join(random_secret())
+            .join("credentials.json");
+
+        login(&server.base_url, &credentials_path, true, true)
+            .await
+            .unwrap();
+
+        let credentials = load_credentials(&credentials_path).unwrap();
+        assert_eq!(credentials.api_base_url, server.base_url);
+        assert_eq!(credentials.token, "test-api-token");
+
+        fs::remove_file(&credentials_path).unwrap();
+        fs::remove_dir(credentials_path.parent().unwrap()).unwrap();
+        server.join().unwrap();
     }
 }
