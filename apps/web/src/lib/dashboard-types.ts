@@ -220,7 +220,7 @@ export type Integration = {
   updated_at: string;
 };
 
-export type PosthogConnection = {
+export type PosthogSecretRotation = {
   integration: Integration;
   webhook_secret: string;
 };

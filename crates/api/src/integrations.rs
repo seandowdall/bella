@@ -35,7 +35,7 @@ pub struct IntegrationResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct PosthogConnectionResponse {
+pub struct PosthogSecretRotationResponse {
     integration: IntegrationResponse,
     webhook_secret: String,
 }
@@ -78,13 +78,13 @@ pub async fn list(
     Ok(Json(rows.iter().map(integration_from_row).collect()))
 }
 
-pub async fn connect_posthog(
+pub async fn save_posthog_settings(
     State(state): State<AppState>,
     Path(organization_id): Path<Uuid>,
     jar: CookieJar,
     headers: HeaderMap,
     Json(request): Json<UpsertPosthogRequest>,
-) -> Result<(StatusCode, Json<PosthogConnectionResponse>), IntegrationError> {
+) -> Result<Json<IntegrationResponse>, IntegrationError> {
     let user = authenticated_user(&state, &jar, &headers).await?;
     require_membership(&state, user.id, organization_id, true).await?;
 
@@ -97,12 +97,6 @@ pub async fn connect_posthog(
         .chars()
         .take(120)
         .collect::<String>();
-    let secret = generate_secret();
-    let (ciphertext, nonce) = state
-        .credential_cipher
-        .encrypt(secret.as_bytes())
-        .map_err(|_| IntegrationError::Encryption)?;
-    let fingerprint = credentials::fingerprint(&secret);
     let api_token = request
         .api_token
         .as_deref()
@@ -123,90 +117,127 @@ pub async fn connect_posthog(
     )?;
 
     let mut transaction = state.db.begin().await?;
-    let upsert = PosthogIntegrationUpsert {
+    let upsert = PosthogSettingsUpsert {
         organization_id,
         display_name: &display_name,
         user_id: user.id,
         metadata: &metadata,
-        webhook_ciphertext: &ciphertext,
-        webhook_nonce: &nonce,
-        webhook_fingerprint: &fingerprint,
         api_token: api_token_secret.as_ref(),
     };
-    let row = upsert_posthog_integration(&mut transaction, &upsert).await?;
+    let row = upsert_posthog_settings(&mut transaction, &upsert).await?;
+    transaction.commit().await?;
+
+    Ok(Json(integration_from_row(&row)))
+}
+
+pub async fn rotate_posthog_webhook_secret(
+    State(state): State<AppState>,
+    Path(organization_id): Path<Uuid>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<(StatusCode, Json<PosthogSecretRotationResponse>), IntegrationError> {
+    let user = authenticated_user(&state, &jar, &headers).await?;
+    require_membership(&state, user.id, organization_id, true).await?;
+
+    let secret = generate_secret();
+    let (ciphertext, nonce) = state
+        .credential_cipher
+        .encrypt(secret.as_bytes())
+        .map_err(|_| IntegrationError::Encryption)?;
+    let fingerprint = credentials::fingerprint(&secret);
+
+    let mut transaction = state.db.begin().await?;
+    let row = rotate_posthog_secret(
+        &mut transaction,
+        organization_id,
+        user.id,
+        &ciphertext,
+        &nonce,
+        &fingerprint,
+    )
+    .await?;
     transaction.commit().await?;
 
     Ok((
         StatusCode::CREATED,
-        Json(PosthogConnectionResponse {
+        Json(PosthogSecretRotationResponse {
             integration: integration_from_row(&row),
             webhook_secret: secret,
         }),
     ))
 }
 
-struct PosthogIntegrationUpsert<'a> {
+pub async fn delete_posthog(
+    State(state): State<AppState>,
+    Path(organization_id): Path<Uuid>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<StatusCode, IntegrationError> {
+    let user = authenticated_user(&state, &jar, &headers).await?;
+    require_membership(&state, user.id, organization_id, true).await?;
+
+    sqlx::query(
+        "delete from integrations where organization_id = $1 and integration_type = 'posthog'",
+    )
+    .bind(organization_id)
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+struct PosthogSettingsUpsert<'a> {
     organization_id: Uuid,
     display_name: &'a str,
     user_id: Uuid,
     metadata: &'a Value,
-    webhook_ciphertext: &'a [u8],
-    webhook_nonce: &'a [u8; 12],
-    webhook_fingerprint: &'a str,
     api_token: Option<&'a (Vec<u8>, [u8; 12], String)>,
 }
 
-async fn upsert_posthog_integration(
+async fn upsert_posthog_settings(
     transaction: &mut Transaction<'_, Postgres>,
-    upsert: &PosthogIntegrationUpsert<'_>,
+    upsert: &PosthogSettingsUpsert<'_>,
 ) -> Result<sqlx::postgres::PgRow, sqlx::Error> {
-    let integration_id = Uuid::new_v4();
-    let credential_id = Uuid::new_v4();
-    sqlx::query(
-        "insert into integrations
-         (id, organization_id, integration_type, display_name, status, metadata)
-         values ($1, $2, 'posthog', $3, 'connected', $4)
-         on conflict (organization_id, integration_type, display_name)
-         do update set status = 'connected',
-                       metadata = integrations.metadata || excluded.metadata,
-                       updated_at = now()",
-    )
-    .bind(integration_id)
-    .bind(upsert.organization_id)
-    .bind(upsert.display_name)
-    .bind(upsert.metadata)
-    .execute(&mut **transaction)
-    .await?;
-
-    let integration_row = sqlx::query(
+    let integration_id = if let Some(row) = sqlx::query(
         "select id from integrations
-         where organization_id = $1 and integration_type = 'posthog' and display_name = $2",
+         where organization_id = $1 and integration_type = 'posthog'
+         order by created_at
+         limit 1",
     )
     .bind(upsert.organization_id)
-    .bind(upsert.display_name)
-    .fetch_one(&mut **transaction)
-    .await?;
-    let integration_id: Uuid = integration_row.get("id");
-
-    sqlx::query(
-        "insert into integration_credentials
-         (id, integration_id, kind, credential_ciphertext, credential_nonce,
-          credential_fingerprint, created_by)
-         values ($1, $2, 'webhook_secret', $3, $4, $5, $6)
-         on conflict (integration_id, kind)
-         do update set credential_ciphertext = excluded.credential_ciphertext,
-                       credential_nonce = excluded.credential_nonce,
-                       credential_fingerprint = excluded.credential_fingerprint,
-                       updated_at = now()",
-    )
-    .bind(credential_id)
-    .bind(integration_id)
-    .bind(upsert.webhook_ciphertext)
-    .bind(upsert.webhook_nonce.as_slice())
-    .bind(upsert.webhook_fingerprint)
-    .bind(upsert.user_id)
-    .execute(&mut **transaction)
-    .await?;
+    .fetch_optional(&mut **transaction)
+    .await?
+    {
+        let integration_id: Uuid = row.get("id");
+        sqlx::query(
+            "update integrations
+             set display_name = $2,
+                 status = 'connected',
+                 metadata = metadata || $3,
+                 updated_at = now()
+             where id = $1",
+        )
+        .bind(integration_id)
+        .bind(upsert.display_name)
+        .bind(upsert.metadata)
+        .execute(&mut **transaction)
+        .await?;
+        integration_id
+    } else {
+        let integration_id = Uuid::new_v4();
+        sqlx::query(
+            "insert into integrations
+             (id, organization_id, integration_type, display_name, status, metadata)
+             values ($1, $2, 'posthog', $3, 'connected', $4)",
+        )
+        .bind(integration_id)
+        .bind(upsert.organization_id)
+        .bind(upsert.display_name)
+        .bind(upsert.metadata)
+        .execute(&mut **transaction)
+        .await?;
+        integration_id
+    };
 
     if let Some((api_ciphertext, api_nonce, api_fingerprint)) = upsert.api_token {
         sqlx::query(
@@ -229,6 +260,84 @@ async fn upsert_posthog_integration(
         .execute(&mut **transaction)
         .await?;
     }
+
+    sqlx::query(
+        "select i.id, i.integration_type, i.display_name, i.status,
+                i.metadata,
+                c.credential_fingerprint,
+                api.credential_fingerprint as api_token_fingerprint,
+                i.created_at, i.updated_at
+         from integrations i
+         left join integration_credentials c
+           on c.integration_id = i.id and c.kind = 'webhook_secret'
+         left join integration_credentials api
+           on api.integration_id = i.id and api.kind = 'api_token'
+         where i.id = $1",
+    )
+    .bind(integration_id)
+    .fetch_one(&mut **transaction)
+    .await
+}
+
+async fn rotate_posthog_secret(
+    transaction: &mut Transaction<'_, Postgres>,
+    organization_id: Uuid,
+    user_id: Uuid,
+    webhook_ciphertext: &[u8],
+    webhook_nonce: &[u8; 12],
+    webhook_fingerprint: &str,
+) -> Result<sqlx::postgres::PgRow, sqlx::Error> {
+    let integration_id = if let Some(row) = sqlx::query(
+        "select id from integrations
+         where organization_id = $1 and integration_type = 'posthog'
+         order by created_at
+         limit 1",
+    )
+    .bind(organization_id)
+    .fetch_optional(&mut **transaction)
+    .await?
+    {
+        let integration_id: Uuid = row.get("id");
+        sqlx::query(
+            "update integrations set status = 'connected', updated_at = now() where id = $1",
+        )
+        .bind(integration_id)
+        .execute(&mut **transaction)
+        .await?;
+        integration_id
+    } else {
+        let integration_id = Uuid::new_v4();
+        sqlx::query(
+            "insert into integrations
+             (id, organization_id, integration_type, display_name, status, metadata)
+             values ($1, $2, 'posthog', 'PostHog', 'connected', '{}'::jsonb)",
+        )
+        .bind(integration_id)
+        .bind(organization_id)
+        .execute(&mut **transaction)
+        .await?;
+        integration_id
+    };
+
+    sqlx::query(
+        "insert into integration_credentials
+         (id, integration_id, kind, credential_ciphertext, credential_nonce,
+          credential_fingerprint, created_by)
+         values ($1, $2, 'webhook_secret', $3, $4, $5, $6)
+         on conflict (integration_id, kind)
+         do update set credential_ciphertext = excluded.credential_ciphertext,
+                       credential_nonce = excluded.credential_nonce,
+                       credential_fingerprint = excluded.credential_fingerprint,
+                       updated_at = now()",
+    )
+    .bind(Uuid::new_v4())
+    .bind(integration_id)
+    .bind(webhook_ciphertext)
+    .bind(webhook_nonce.as_slice())
+    .bind(webhook_fingerprint)
+    .bind(user_id)
+    .execute(&mut **transaction)
+    .await?;
 
     sqlx::query(
         "select i.id, i.integration_type, i.display_name, i.status,

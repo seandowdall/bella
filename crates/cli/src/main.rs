@@ -601,7 +601,7 @@ async fn main() -> anyhow::Result<()> {
                     resolve_organization_id(&cli.api_base_url, &credentials.token, organization)
                         .await?;
                 let api_token = read_optional_secret(api_token, api_token_stdin)?;
-                let connection = connect_posthog(
+                save_posthog_settings(
                     &cli.api_base_url,
                     &credentials.token,
                     &organization,
@@ -611,6 +611,9 @@ async fn main() -> anyhow::Result<()> {
                     api_token.as_deref(),
                 )
                 .await?;
+                let connection =
+                    rotate_posthog_secret(&cli.api_base_url, &credentials.token, &organization)
+                        .await?;
                 let webhook_url = format_posthog_webhook_url(
                     public_api_url.as_deref().unwrap_or(&cli.api_base_url),
                     &organization,
@@ -998,7 +1001,7 @@ async fn list_integrations(
         .context("Bella API returned an invalid integration list")
 }
 
-async fn connect_posthog(
+async fn save_posthog_settings(
     api_base_url: &str,
     token: &str,
     organization_id: &str,
@@ -1006,9 +1009,9 @@ async fn connect_posthog(
     posthog_host: Option<&str>,
     posthog_project_id: Option<&str>,
     api_token: Option<&str>,
-) -> anyhow::Result<PosthogConnection> {
+) -> anyhow::Result<Integration> {
     Client::new()
-        .post(format!(
+        .patch(format!(
             "{}/v1/organizations/{organization_id}/integrations/posthog",
             api_base_url.trim_end_matches('/')
         ))
@@ -1023,10 +1026,31 @@ async fn connect_posthog(
         .await
         .context("failed to contact Bella API")?
         .error_for_status()
-        .context("Bella API rejected the PostHog integration request")?
+        .context("Bella API rejected the PostHog settings request")?
         .json()
         .await
-        .context("Bella API returned an invalid PostHog integration response")
+        .context("Bella API returned an invalid PostHog settings response")
+}
+
+async fn rotate_posthog_secret(
+    api_base_url: &str,
+    token: &str,
+    organization_id: &str,
+) -> anyhow::Result<PosthogConnection> {
+    Client::new()
+        .post(format!(
+            "{}/v1/organizations/{organization_id}/integrations/posthog/webhook-secret/rotate",
+            api_base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("failed to contact Bella API")?
+        .error_for_status()
+        .context("Bella API rejected the PostHog secret rotation request")?
+        .json()
+        .await
+        .context("Bella API returned an invalid PostHog secret rotation response")
 }
 
 async fn check_posthog(
