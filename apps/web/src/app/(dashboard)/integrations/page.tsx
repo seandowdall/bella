@@ -20,8 +20,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   connectPosthogIntegration,
   createSlackInstallUrl,
@@ -45,6 +48,7 @@ export default function IntegrationsPage() {
   const [copied, setCopied] = useState("");
 
   const posthog = integrations.find((integration) => integration.integration_type === "posthog");
+  const workspaceConnected = slackStatus?.workspace?.status === "connected";
   const webhookUrl = useMemo(() => {
     if (!selectedOrganizationId) return "";
     return `${publicApiUrl.replace(/\/$/, "")}/v1/organizations/${selectedOrganizationId}/webhooks/posthog`;
@@ -121,7 +125,7 @@ export default function IntegrationsPage() {
   };
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
         <p className="text-muted-foreground text-sm">
@@ -137,121 +141,98 @@ export default function IntegrationsPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex flex-col gap-1">
-              <CardTitle className="flex items-center gap-2">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="bg-muted flex size-10 shrink-0 items-center justify-center rounded-lg">
                 <MessageSquareIcon />
-                Slack
-              </CardTitle>
-              <CardDescription>
-                Route new incident threads to the Slack channels where Bella is invited.
-              </CardDescription>
+              </div>
+              <div className="flex min-w-0 flex-col gap-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <CardTitle>Slack</CardTitle>
+                  {!loading && (
+                    <Badge variant={workspaceConnected ? "secondary" : "outline"}>
+                      {workspaceConnected ? "Connected" : "Not connected"}
+                    </Badge>
+                  )}
+                </div>
+                <CardDescription>
+                  Send incidents to the Slack channels where your team works.
+                </CardDescription>
+              </div>
             </div>
-            <Badge variant={slackStatus?.installed ? "secondary" : "outline"}>
-              {slackStatus?.installed ? "Installed" : "Not installed"}
-            </Badge>
+            {!loading && (
+              <Button
+                type="button"
+                variant={workspaceConnected ? "outline" : "default"}
+                onClick={() => void installSlack()}
+                disabled={!selectedOrganizationId || installingSlack}
+              >
+                {installingSlack ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <ExternalLinkIcon data-icon="inline-start" />
+                )}
+                {workspaceConnected ? "Reconnect" : "Install Slack"}
+              </Button>
+            )}
           </div>
         </CardHeader>
-        <CardContent className="flex flex-col gap-5">
-          {loading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Spinner />
-              Loading Slack
-            </div>
-          ) : slackStatus?.installed ? (
-            <>
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="slack-workspace">Workspace</FieldLabel>
-                  <Input
-                    id="slack-workspace"
-                    value={`${slackStatus.workspace?.team_name ?? "Slack workspace"} · ${formatLabel(slackStatus.workspace?.status ?? "connected")}`}
-                    readOnly
-                  />
-                  {slackStatus.workspace?.status_reason && (
-                    <FieldDescription>
-                      {formatLabel(slackStatus.workspace.status_reason)}
-                    </FieldDescription>
-                  )}
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="slack-invite-command">Channel invite</FieldLabel>
-                  <div className="flex gap-2">
-                    <Input id="slack-invite-command" value="/invite @Bella" readOnly />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => void copy("slack-invite", "/invite @Bella")}
-                    >
-                      {copied === "slack-invite" ? (
-                        <CheckIcon data-icon="inline-start" />
-                      ) : (
-                        <CopyIcon data-icon="inline-start" />
-                      )}
-                      Copy
-                    </Button>
-                  </div>
-                  <FieldDescription>
-                    Run this in each Slack channel where Bella should create incident threads.
-                  </FieldDescription>
-                </Field>
-              </FieldGroup>
 
-              {slackStatus.channels.length > 0 ? (
-                <div className="flex flex-col gap-2">
-                  <p className="text-sm font-medium">Detected channels</p>
-                  <div className="flex flex-col gap-2">
-                    {slackStatus.channels.map((channel) => (
-                      <div
-                        key={channel.id}
-                        className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+        {loading ? (
+          <CardContent>
+            <Skeleton className="h-20 w-full" />
+          </CardContent>
+        ) : workspaceConnected ? (
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1">
+              <p className="text-sm font-medium">
+                {slackStatus?.workspace?.team_name ?? "Slack workspace"}
+              </p>
+              <p className="text-muted-foreground text-sm">
+                Bella is installed. Reconnect to authorize a different workspace.
+              </p>
+            </div>
+
+            <Field>
+              <FieldLabel htmlFor="slack-invite-command">Add Bella to a channel</FieldLabel>
+              <InputGroup>
+                <InputGroupInput
+                  id="slack-invite-command"
+                  value="/invite @Bella"
+                  readOnly
+                  className="font-mono"
+                />
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <InputGroupAddon
+                        align="inline-end"
+                        aria-label="Copy Slack invite command"
+                        onClick={() => void copy("slack-invite", "/invite @Bella")}
                       >
-                        <div className="flex min-w-0 flex-col gap-1">
-                          <p className="truncate text-sm font-medium">
-                            {channel.channel_name ? `#${channel.channel_name}` : channel.channel_id}
-                          </p>
-                          <p className="text-muted-foreground text-xs">
-                            {formatLabel(channel.channel_type)}
-                          </p>
-                        </div>
-                        <Badge variant={channel.status === "active" ? "secondary" : "outline"}>
-                          {formatLabel(channel.status)}
-                        </Badge>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <Alert>
-                  <AlertDescription>
-                    Invite Bella to a Slack channel to activate incident delivery.
-                  </AlertDescription>
-                </Alert>
-              )}
-            </>
-          ) : (
-            <Alert>
-              <AlertDescription>
-                Install Bella in Slack, then invite it to the channel where incidents should be
-                posted.
-              </AlertDescription>
-            </Alert>
-          )}
-        </CardContent>
-        <CardFooter className="justify-end gap-3">
-          <Button
-            type="button"
-            onClick={() => void installSlack()}
-            disabled={!selectedOrganizationId || installingSlack}
-          >
-            {installingSlack ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <ExternalLinkIcon data-icon="inline-start" />
+                        {copied === "slack-invite" ? <CheckIcon /> : <CopyIcon />}
+                      </InputGroupAddon>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {copied === "slack-invite" ? "Copied" : "Copy command"}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </InputGroup>
+              <FieldDescription>
+                Run this command in each channel that should receive incidents.
+              </FieldDescription>
+            </Field>
+
+            {slackStatus?.workspace?.status_reason && (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  {formatLabel(slackStatus.workspace.status_reason)}
+                </AlertDescription>
+              </Alert>
             )}
-            {slackStatus?.installed ? "Reconnect Slack" : "Install Bella in Slack"}
-          </Button>
-        </CardFooter>
+          </CardContent>
+        ) : null}
       </Card>
 
       <Card>
