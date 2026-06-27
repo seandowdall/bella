@@ -8,7 +8,7 @@ import type {
   IncidentStatus,
   Integration,
   PosthogConnectionCheck,
-  PosthogConnection,
+  PosthogSecretRotation,
   PosthogSyncOutcome,
   ProviderAccount,
   ProviderDefinition,
@@ -381,7 +381,7 @@ export async function getIntegrations(organizationId: string): Promise<Integrati
   return response.json() as Promise<Integration[]>;
 }
 
-export async function connectPosthogIntegration({
+export async function savePosthogSettings({
   organizationId,
   displayName,
   posthogHost,
@@ -393,11 +393,11 @@ export async function connectPosthogIntegration({
   posthogHost?: string;
   posthogProjectId?: string;
   apiToken?: string;
-}): Promise<PosthogConnection> {
+}): Promise<Integration> {
   const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/posthog`,
     {
-      method: "POST",
+      method: "PATCH",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -409,9 +409,38 @@ export async function connectPosthogIntegration({
     },
   );
   if (!response.ok) {
-    throw new Error(await errorMessage(response, "Could not connect PostHog."));
+    throw new Error(await errorMessage(response, "Could not save PostHog settings."));
   }
-  return response.json() as Promise<PosthogConnection>;
+  return response.json() as Promise<Integration>;
+}
+
+export async function rotatePosthogWebhookSecret(
+  organizationId: string,
+): Promise<PosthogSecretRotation> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/posthog/webhook-secret/rotate`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not rotate PostHog webhook secret."));
+  }
+  return response.json() as Promise<PosthogSecretRotation>;
+}
+
+export async function deletePosthogIntegration(organizationId: string): Promise<void> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/posthog`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not disconnect PostHog."));
+  }
 }
 
 export async function checkPosthogIntegration(

@@ -323,7 +323,11 @@ async fn main() -> anyhow::Result<()> {
         )
         .route(
             "/v1/organizations/:organization_id/integrations/posthog",
-            post(integrations::connect_posthog),
+            patch(integrations::save_posthog_settings).delete(integrations::delete_posthog),
+        )
+        .route(
+            "/v1/organizations/:organization_id/integrations/posthog/webhook-secret/rotate",
+            post(integrations::rotate_posthog_webhook_secret),
         )
         .route(
             "/v1/organizations/:organization_id/agent/messages",
