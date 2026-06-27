@@ -6,7 +6,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::Row;
 use uuid::Uuid;
@@ -70,6 +70,11 @@ pub struct IncidentEventDetail {
     created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateIncidentRequest {
+    status: String,
+}
+
 pub async fn list(
     State(state): State<AppState>,
     Path(organization_id): Path<Uuid>,
@@ -120,6 +125,83 @@ pub async fn get(
     let user = authenticated_user(&state, &jar, &headers).await?;
     require_membership(&state, user.id, organization_id).await?;
 
+    load_incident_detail(&state, organization_id, incident_id)
+        .await
+        .map(Json)
+}
+
+pub async fn update(
+    State(state): State<AppState>,
+    Path((organization_id, incident_id)): Path<(Uuid, Uuid)>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    Json(request): Json<UpdateIncidentRequest>,
+) -> Result<Json<IncidentDetail>, IncidentError> {
+    let user = authenticated_user(&state, &jar, &headers).await?;
+    require_membership(&state, user.id, organization_id).await?;
+
+    let next_status = validate_incident_status(&request.status)?;
+    let mut transaction = state.db.begin().await?;
+    let row = sqlx::query(
+        "with existing as (
+             select status
+             from incidents
+             where id = $1 and organization_id = $2
+         )
+         update incidents
+         set status = $3,
+             resolved_at = case
+                 when $3 = 'resolved' then coalesce(incidents.resolved_at, now())
+                 when incidents.status = 'resolved' and $3 <> 'resolved' then null
+                 else incidents.resolved_at
+             end,
+             updated_at = now()
+         from existing
+         where incidents.id = $1 and incidents.organization_id = $2
+         returning existing.status as previous_status",
+    )
+    .bind(incident_id)
+    .bind(organization_id)
+    .bind(next_status)
+    .fetch_optional(&mut *transaction)
+    .await?
+    .ok_or(IncidentError::NotFound)?;
+    let previous_status: String = row.get("previous_status");
+
+    if previous_status != next_status {
+        sqlx::query(
+            "insert into incident_events
+             (id, organization_id, incident_id, event_type, title, metadata)
+             values ($1, $2, $3, 'incident.status_changed', $4, $5)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(organization_id)
+        .bind(incident_id)
+        .bind(format!(
+            "Status changed from {} to {}",
+            format_status_label(&previous_status),
+            format_status_label(next_status)
+        ))
+        .bind(serde_json::json!({
+            "previous_status": previous_status,
+            "next_status": next_status,
+            "actor_user_id": user.id,
+        }))
+        .execute(&mut *transaction)
+        .await?;
+    }
+
+    transaction.commit().await?;
+    load_incident_detail(&state, organization_id, incident_id)
+        .await
+        .map(Json)
+}
+
+async fn load_incident_detail(
+    state: &AppState,
+    organization_id: Uuid,
+    incident_id: Uuid,
+) -> Result<IncidentDetail, IncidentError> {
     let row = sqlx::query(
         "select id, organization_id, title, status, severity, source, fingerprint,
                 summary, impact, detected_at, resolved_at, metadata
@@ -176,7 +258,7 @@ pub async fn get(
     })
     .collect();
 
-    Ok(Json(IncidentDetail {
+    Ok(IncidentDetail {
         id: row.get("id"),
         organization_id: row.get("organization_id"),
         title: row.get("title"),
@@ -191,7 +273,7 @@ pub async fn get(
         metadata: row.get("metadata"),
         signals,
         events,
-    }))
+    })
 }
 
 async fn require_membership(
@@ -214,10 +296,27 @@ async fn require_membership(
     Ok(())
 }
 
+fn validate_incident_status(value: &str) -> Result<&'static str, IncidentError> {
+    match value.trim() {
+        "triggered" => Ok("triggered"),
+        "acknowledged" => Ok("acknowledged"),
+        "investigating" => Ok("investigating"),
+        "mitigated" => Ok("mitigated"),
+        "resolved" => Ok("resolved"),
+        "follow_up" => Ok("follow_up"),
+        _ => Err(IncidentError::InvalidStatus),
+    }
+}
+
+fn format_status_label(value: &str) -> String {
+    value.replace('_', " ")
+}
+
 #[derive(Debug)]
 pub enum IncidentError {
     Auth(AuthError),
     Database(sqlx::Error),
+    InvalidStatus,
     NotFound,
 }
 
@@ -228,6 +327,9 @@ impl IntoResponse for IncidentError {
             Self::Database(error) => {
                 tracing::error!(error = %error, "incident request failed");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+            Self::InvalidStatus => {
+                (StatusCode::BAD_REQUEST, "invalid incident status").into_response()
             }
             Self::NotFound => StatusCode::NOT_FOUND.into_response(),
         }
@@ -243,5 +345,27 @@ impl From<AuthError> for IncidentError {
 impl From<sqlx::Error> for IncidentError {
     fn from(error: sqlx::Error) -> Self {
         Self::Database(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_incident_status;
+
+    #[test]
+    fn validates_dogfood_lifecycle_statuses() {
+        for status in [
+            "triggered",
+            "acknowledged",
+            "investigating",
+            "mitigated",
+            "resolved",
+            "follow_up",
+        ] {
+            assert_eq!(validate_incident_status(status).unwrap(), status);
+        }
+
+        assert!(validate_incident_status("triaging").is_err());
+        assert!(validate_incident_status("false_positive").is_err());
     }
 }

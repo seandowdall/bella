@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CheckIcon, CopyIcon, ExternalLinkIcon, RotateCcwIcon } from "lucide-react";
+import {
+  CheckIcon,
+  CopyIcon,
+  ExternalLinkIcon,
+  PlayIcon,
+  RotateCcwIcon,
+  ShieldCheckIcon,
+} from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,10 +22,21 @@ import {
 } from "@/components/ui/card";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
-import { connectPosthogIntegration, getIntegrations } from "@/lib/api";
+import {
+  checkPosthogIntegration,
+  connectPosthogIntegration,
+  getIntegrations,
+  syncPosthogIntegration,
+} from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import type { Integration, PosthogConnection } from "@/lib/dashboard-types";
+import type {
+  Integration,
+  PosthogConnection,
+  PosthogConnectionCheck,
+  PosthogSyncOutcome,
+} from "@/lib/dashboard-types";
 
 const publicApiUrl = process.env.NEXT_PUBLIC_BELLA_PUBLIC_API_URL ?? "http://127.0.0.1:3000";
 
@@ -28,10 +46,18 @@ export default function IntegrationsPage() {
   const [connection, setConnection] = useState<PosthogConnection | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
+  const [posthogHost, setPosthogHost] = useState("https://us.posthog.com");
+  const [posthogProjectId, setPosthogProjectId] = useState("");
+  const [posthogApiToken, setPosthogApiToken] = useState("");
+  const [checkResult, setCheckResult] = useState<PosthogConnectionCheck | null>(null);
+  const [syncResult, setSyncResult] = useState<PosthogSyncOutcome | null>(null);
 
   const posthog = integrations.find((integration) => integration.integration_type === "posthog");
+  const apiConfigured = Boolean(posthog?.api_token_fingerprint);
   const webhookUrl = useMemo(() => {
     if (!selectedOrganizationId) return "";
     return `${publicApiUrl.replace(/\/$/, "")}/v1/organizations/${selectedOrganizationId}/webhooks/posthog`;
@@ -59,15 +85,30 @@ export default function IntegrationsPage() {
     };
   }, [selectedOrganizationId]);
 
+  useEffect(() => {
+    if (!posthog) return;
+    const savedHost = stringMetadata(posthog.metadata, "posthog_host");
+    const savedProjectId = stringMetadata(posthog.metadata, "posthog_project_id");
+    if (savedHost) setPosthogHost(savedHost);
+    if (savedProjectId) setPosthogProjectId(savedProjectId);
+  }, [posthog]);
+
   const connectPosthog = async () => {
     if (!selectedOrganizationId) return;
     setConnecting(true);
     setError("");
+    setCheckResult(null);
+    setSyncResult(null);
     try {
       const nextConnection = await connectPosthogIntegration({
         organizationId: selectedOrganizationId,
+        displayName: posthog?.display_name ?? "PostHog",
+        posthogHost,
+        posthogProjectId,
+        apiToken: posthogApiToken,
       });
       setConnection(nextConnection);
+      setPosthogApiToken("");
       setIntegrations((current) => [
         ...current.filter((item) => item.id !== nextConnection.integration.id),
         nextConnection.integration,
@@ -76,6 +117,34 @@ export default function IntegrationsPage() {
       setError(e instanceof Error ? e.message : "Could not connect PostHog.");
     } finally {
       setConnecting(false);
+    }
+  };
+
+  const checkPosthog = async () => {
+    if (!selectedOrganizationId) return;
+    setChecking(true);
+    setError("");
+    setCheckResult(null);
+    try {
+      setCheckResult(await checkPosthogIntegration(selectedOrganizationId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not verify PostHog API access.");
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const syncPosthog = async () => {
+    if (!selectedOrganizationId) return;
+    setSyncing(true);
+    setError("");
+    setSyncResult(null);
+    try {
+      setSyncResult(await syncPosthogIntegration(selectedOrganizationId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not sync PostHog signals.");
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -183,15 +252,121 @@ export default function IntegrationsPage() {
                 </Field>
               </FieldGroup>
 
-              <div className="rounded-lg bg-muted p-4 text-sm">
-                <p className="font-medium">PostHog setup</p>
-                <ol className="mt-2 list-decimal pl-5 text-muted-foreground">
-                  <li>Create an error tracking alert or realtime destination.</li>
-                  <li>Choose HTTP webhook as the destination.</li>
-                  <li>Paste the webhook URL above.</li>
-                  <li>Add the secret as a bearer token or webhook header.</li>
-                  <li>Trigger a test alert and check Bella Incidents.</li>
-                </ol>
+              <Separator />
+
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-col gap-1">
+                    <h2 className="text-sm font-medium">Production API ingestion</h2>
+                    <p className="text-sm text-muted-foreground">
+                      Pull bounded read-only PostHog signals into incident candidates.
+                    </p>
+                  </div>
+                  <Badge variant={apiConfigured ? "secondary" : "outline"}>
+                    {apiConfigured ? "API token saved" : "API token missing"}
+                  </Badge>
+                </div>
+
+                <FieldGroup>
+                  <Field>
+                    <FieldLabel htmlFor="posthog-host">PostHog host</FieldLabel>
+                    <Input
+                      id="posthog-host"
+                      value={posthogHost}
+                      onChange={(event) => setPosthogHost(event.target.value)}
+                      placeholder="https://us.posthog.com"
+                    />
+                    <FieldDescription>
+                      Use the app origin for US Cloud, EU Cloud, or your self-hosted PostHog.
+                    </FieldDescription>
+                  </Field>
+
+                  <Field>
+                    <FieldLabel htmlFor="posthog-project-id">Project ID</FieldLabel>
+                    <Input
+                      id="posthog-project-id"
+                      value={posthogProjectId}
+                      onChange={(event) => setPosthogProjectId(event.target.value)}
+                      placeholder="12345"
+                    />
+                  </Field>
+
+                  <Field>
+                    <FieldLabel htmlFor="posthog-api-token">API token</FieldLabel>
+                    <Input
+                      id="posthog-api-token"
+                      type="password"
+                      value={posthogApiToken}
+                      onChange={(event) => setPosthogApiToken(event.target.value)}
+                      placeholder={
+                        posthog?.api_token_fingerprint
+                          ? `Saved, fingerprint ${posthog.api_token_fingerprint}`
+                          : "PostHog personal API key"
+                      }
+                    />
+                    <FieldDescription>
+                      Requires PostHog `query:read`. Leave blank to keep the saved token.
+                    </FieldDescription>
+                  </Field>
+                </FieldGroup>
+
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <Button type="button" onClick={() => void connectPosthog()} disabled={connecting}>
+                    {connecting ? (
+                      <Spinner data-icon="inline-start" />
+                    ) : (
+                      <RotateCcwIcon data-icon="inline-start" />
+                    )}
+                    Save and rotate secret
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void checkPosthog()}
+                    disabled={checking || !apiConfigured}
+                  >
+                    {checking ? (
+                      <Spinner data-icon="inline-start" />
+                    ) : (
+                      <ShieldCheckIcon data-icon="inline-start" />
+                    )}
+                    Check connection
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void syncPosthog()}
+                    disabled={syncing || !apiConfigured}
+                  >
+                    {syncing ? (
+                      <Spinner data-icon="inline-start" />
+                    ) : (
+                      <PlayIcon data-icon="inline-start" />
+                    )}
+                    Sync now
+                  </Button>
+                </div>
+
+                {(checkResult || syncResult) && (
+                  <div className="rounded-lg bg-muted p-4 text-sm">
+                    {checkResult && (
+                      <p>
+                        Connection verified for project {checkResult.posthog_project_id}; observed{" "}
+                        {checkResult.observed_rows} recent row
+                        {checkResult.observed_rows === 1 ? "" : "s"}.
+                      </p>
+                    )}
+                    {syncResult && (
+                      <p>
+                        Sync {syncResult.sync_run_id} saw {syncResult.signals_seen} signal
+                        {syncResult.signals_seen === 1 ? "" : "s"}, upserted{" "}
+                        {syncResult.signals_upserted}, and created{" "}
+                        {syncResult.incident_candidates_created} candidate
+                        {syncResult.incident_candidates_created === 1 ? "" : "s"}.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -207,16 +382,13 @@ export default function IntegrationsPage() {
               PostHog alert docs
             </a>
           </Button>
-          <Button onClick={() => void connectPosthog()} disabled={connecting}>
-            {connecting ? (
-              <Spinner data-icon="inline-start" />
-            ) : posthog ? (
-              <RotateCcwIcon data-icon="inline-start" />
-            ) : null}
-            {posthog ? "Rotate secret" : "Connect PostHog"}
-          </Button>
         </CardFooter>
       </Card>
     </div>
   );
+}
+
+function stringMetadata(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+  return typeof value === "string" ? value : "";
 }
