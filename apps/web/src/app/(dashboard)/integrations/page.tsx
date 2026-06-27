@@ -70,7 +70,18 @@ export default function IntegrationsPage() {
   const [loading, setLoading] = useState(true);
   const [installingSlack, setInstallingSlack] = useState(false);
   const [error, setError] = useState("");
+  const [oauthError, setOauthError] = useState("");
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const slackResult = url.searchParams.get("slack");
+    if (slackResult === "workspace_conflict") {
+      setOauthError("This Slack workspace is already connected to another Bella organization.");
+      url.searchParams.delete("slack");
+      window.history.replaceState({}, "", url);
+    }
+  }, []);
 
   useEffect(() => {
     if (!selectedOrganizationId) return;
@@ -111,6 +122,7 @@ export default function IntegrationsPage() {
     if (!selectedOrganizationId) return;
     setInstallingSlack(true);
     setError("");
+    setOauthError("");
     try {
       const result = await createSlackInstallUrl({
         organizationId: selectedOrganizationId,
@@ -138,9 +150,9 @@ export default function IntegrationsPage() {
         </p>
       </div>
 
-      {error && (
+      {(oauthError || error) && (
         <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{oauthError || error}</AlertDescription>
         </Alert>
       )}
 

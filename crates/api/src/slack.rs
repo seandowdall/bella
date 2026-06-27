@@ -217,6 +217,13 @@ pub async fn oauth_callback(
         .map(|cookie| cookie.value().to_owned());
     let redirect = match complete_oauth_callback(&state, query, browser_nonce.as_deref()).await {
         Ok(return_to) => redirect_with_slack_status(&return_to, "installed"),
+        Err(SlackError::WorkspaceAlreadyConnected) => redirect_with_slack_status(
+            &format!(
+                "{}/integrations",
+                state.config.web_url.trim_end_matches('/')
+            ),
+            "workspace_conflict",
+        ),
         Err(error) => {
             tracing::warn!(error = ?error, "Slack OAuth callback failed");
             redirect_with_slack_status(&state.config.web_url, "error")
@@ -543,8 +550,19 @@ async fn store_slack_installation(
         .ok_or(SlackError::InvalidOAuthResponse)?;
     let scopes = parse_scope_list(response.scope.as_deref().unwrap_or_default());
     let display_name = format!("Slack - {}", truncate(&team.name, 112));
+    let app_id = response
+        .app_id
+        .as_deref()
+        .ok_or(SlackError::InvalidOAuthResponse)?;
 
     let mut transaction = state.db.begin().await?;
+    ensure_slack_workspace_available(
+        &mut transaction,
+        organization_id,
+        team.id.trim(),
+        app_id.trim(),
+    )
+    .await?;
     let integration_id = upsert_slack_integration(
         &mut transaction,
         organization_id,
@@ -565,6 +583,29 @@ async fn store_slack_installation(
     )
     .await?;
     transaction.commit().await?;
+    Ok(())
+}
+
+async fn ensure_slack_workspace_available(
+    transaction: &mut Transaction<'_, Postgres>,
+    organization_id: Uuid,
+    slack_team_id: &str,
+    slack_app_id: &str,
+) -> Result<(), SlackError> {
+    let existing_organization_id = sqlx::query_scalar::<_, Uuid>(
+        "select organization_id
+         from slack_installations
+         where slack_team_id = $1 and slack_app_id = $2
+         for update",
+    )
+    .bind(slack_team_id)
+    .bind(slack_app_id)
+    .fetch_optional(&mut **transaction)
+    .await?;
+
+    if existing_organization_id.is_some_and(|existing| existing != organization_id) {
+        return Err(SlackError::WorkspaceAlreadyConnected);
+    }
     Ok(())
 }
 
@@ -684,9 +725,19 @@ async fn upsert_slack_installation(
     .bind(scopes)
     .bind(user_id)
     .execute(&mut **transaction)
-    .await?;
+    .await
+    .map_err(map_slack_installation_write_error)?;
 
     Ok(())
+}
+
+fn map_slack_installation_write_error(error: sqlx::Error) -> SlackError {
+    if let sqlx::Error::Database(database_error) = &error
+        && database_error.constraint() == Some("slack_installations_team_app_unique")
+    {
+        return SlackError::WorkspaceAlreadyConnected;
+    }
+    SlackError::Database(error)
 }
 
 async fn handle_slack_event_callback(
@@ -773,9 +824,7 @@ async fn find_slack_installation(
     let row = sqlx::query(
         "select id, organization_id, slack_bot_user_id
          from slack_installations
-         where slack_team_id = $1 and slack_app_id = $2
-         order by updated_at desc
-         limit 1",
+         where slack_team_id = $1 and slack_app_id = $2",
     )
     .bind(slack_team_id)
     .bind(slack_app_id)
@@ -1146,6 +1195,7 @@ pub enum SlackError {
     NotFound,
     OAuthRejected,
     SlackUnavailable,
+    WorkspaceAlreadyConnected,
 }
 
 impl From<AuthError> for SlackError {
@@ -1234,6 +1284,13 @@ impl IntoResponse for SlackError {
                 })),
             )
                 .into_response(),
+            Self::WorkspaceAlreadyConnected => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "Slack workspace is already connected to another Bella organization"
+                })),
+            )
+                .into_response(),
             Self::Client(SlackClientError::ChannelArchived) => (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({ "error": "Slack channel is archived" })),
@@ -1293,14 +1350,15 @@ impl IntoResponse for SlackError {
 #[cfg(test)]
 mod tests {
     use super::{
-        SLACK_OAUTH_SCOPE, SlackEventChannel, SlackEventChannelValue, SlackEventPayload,
-        SlackInstallationRef, SlackOAuthAccessResponse, SlackOAuthTeam, browser_nonce_matches,
-        build_slack_install_url, decode_hex, hash_token, is_safe_return_to,
+        SLACK_OAUTH_SCOPE, SlackError, SlackEventChannel, SlackEventChannelValue,
+        SlackEventPayload, SlackInstallationRef, SlackOAuthAccessResponse, SlackOAuthTeam,
+        browser_nonce_matches, build_slack_install_url, decode_hex, hash_token, is_safe_return_to,
         normalize_slack_channel_type, parse_scope_list, redirect_with_slack_status,
         target_from_slack_event, validate_oauth_access_response, verify_slack_signature,
     };
     use crate::SlackCloudConfig;
     use axum::http::HeaderMap;
+    use axum::response::IntoResponse;
     use chrono::Utc;
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -1384,6 +1442,13 @@ mod tests {
             redirect_with_slack_status("https://app.bella.example/integrations?tab=chat", "error"),
             "https://app.bella.example/integrations?tab=chat&slack=error"
         );
+    }
+
+    #[test]
+    fn workspace_conflict_returns_conflict_status() {
+        let response = SlackError::WorkspaceAlreadyConnected.into_response();
+
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
     }
 
     #[test]

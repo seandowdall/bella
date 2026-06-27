@@ -21,6 +21,11 @@ The current implementation supports:
 5. A user runs `/invite @Bella QA` in a channel.
 6. Slack sends a signed `member_joined_channel` event and Bella records the
    channel as a delivery target.
+
+Each Slack workspace can be connected to only one Bella organization for a
+given Slack app. Slack events identify the workspace and app but do not carry a
+Bella organization ID, so Bella rejects attempts to connect the same workspace
+to another organization instead of guessing tenant ownership.
 7. A valid PostHog webhook creates an incident and durable delivery job.
 8. The worker posts the incident root message and stores its Slack thread
    timestamp.
