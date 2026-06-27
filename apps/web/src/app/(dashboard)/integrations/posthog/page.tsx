@@ -85,7 +85,11 @@ export default function PosthogIntegrationPage() {
   const apiConfigured = Boolean(posthog?.api_token_fingerprint);
   const webhookConfigured = Boolean(posthog?.credential_fingerprint);
   const integrationConfigured = apiConfigured && webhookConfigured;
-  const primaryStatus = integrationConfigured ? "Connected" : posthog ? "Needs setup" : "Not connected";
+  const primaryStatus = integrationConfigured
+    ? "Connected"
+    : posthog
+      ? "Needs setup"
+      : "Not connected";
   const nextAction = !webhookConfigured
     ? "Generate a webhook secret"
     : !apiConfigured
@@ -105,7 +109,8 @@ export default function PosthogIntegrationPage() {
       try {
         const nextIntegrations = await getIntegrations(selectedOrganizationId);
         const nextPosthog =
-          nextIntegrations.find((integration) => integration.integration_type === "posthog") ?? null;
+          nextIntegrations.find((integration) => integration.integration_type === "posthog") ??
+          null;
         if (!cancelled) {
           const savedHost = nextPosthog ? stringMetadata(nextPosthog.metadata, "posthog_host") : "";
           const savedProjectId = nextPosthog
@@ -393,7 +398,9 @@ export default function PosthogIntegrationPage() {
                       }
                       autoComplete="off"
                     />
-                    <FieldDescription>Requires `query:read`. Leave blank to keep saved token.</FieldDescription>
+                    <FieldDescription>
+                      Requires `query:read`. Leave blank to keep saved token.
+                    </FieldDescription>
                   </Field>
                 </FieldGroup>
 
@@ -446,8 +453,14 @@ export default function PosthogIntegrationPage() {
                 <CardDescription>Next: {nextAction}</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
-                <StatusRow label="Alert webhooks" value={webhookConfigured ? "Configured" : "Missing secret"} />
-                <StatusRow label="Signal sync" value={apiConfigured ? "Configured" : "Needs token"} />
+                <StatusRow
+                  label="Alert webhooks"
+                  value={webhookConfigured ? "Configured" : "Missing secret"}
+                />
+                <StatusRow
+                  label="Signal sync"
+                  value={apiConfigured ? "Configured" : "Needs token"}
+                />
                 <StatusRow label="Last updated" value={formatDateTime(posthog?.updated_at)} />
               </CardContent>
             </Card>
@@ -476,9 +489,7 @@ export default function PosthogIntegrationPage() {
                 />
                 <StatusRow
                   label="Candidates"
-                  value={
-                    syncResult ? String(syncResult.incident_candidates_created) : "Not run"
-                  }
+                  value={syncResult ? String(syncResult.incident_candidates_created) : "Not run"}
                 />
               </CardContent>
             </Card>
@@ -584,12 +595,20 @@ function SetupStep({ done, label, note }: { done: boolean; label: string; note?:
         )}
         <span>{label}</span>
       </div>
-      <Badge variant={done ? "secondary" : "outline"}>{done ? "Done" : note ?? "Todo"}</Badge>
+      <Badge variant={done ? "secondary" : "outline"}>{done ? "Done" : (note ?? "Todo")}</Badge>
     </div>
   );
 }
 
-function KeyValueRow({ label, value, action }: { label: string; value: string; action?: ReactNode }) {
+function KeyValueRow({
+  label,
+  value,
+  action,
+}: {
+  label: string;
+  value: string;
+  action?: ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
       <div className="min-w-32 text-sm font-medium">{label}</div>

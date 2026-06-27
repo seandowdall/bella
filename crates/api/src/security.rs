@@ -1,56 +1,28 @@
 use axum::{
     Json,
-    extract::{ConnectInfo, Request, State},
+    extract::{Request, State},
     http::{HeaderMap, Method, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use std::{
-    collections::{HashMap, VecDeque},
-    net::SocketAddr,
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+use std::{net::IpAddr, time::Duration};
 
 use crate::AppState;
 
 const SESSION_COOKIE: &str = "bella_session";
 
-pub struct RateLimiter {
-    buckets: Mutex<HashMap<String, VecDeque<Instant>>>,
-}
-
-impl RateLimiter {
-    pub fn new() -> Self {
-        Self {
-            buckets: Mutex::new(HashMap::new()),
-        }
-    }
-
-    fn check(&self, key: String, limit: usize, window: Duration) -> bool {
-        let now = Instant::now();
-        let cutoff = now - window;
-        let mut buckets = self.buckets.lock().expect("rate limiter mutex poisoned");
-        if buckets.len() > 10_000 {
-            buckets.retain(|_, hits| hits.back().is_some_and(|last| *last >= cutoff));
-        }
-        let hits = buckets.entry(key).or_default();
-        while hits.front().is_some_and(|hit| *hit < cutoff) {
-            hits.pop_front();
-        }
-        if hits.len() >= limit {
-            return false;
-        }
-        hits.push_back(now);
-        true
-    }
-}
-
 pub async fn guard(State(state): State<AppState>, request: Request, next: Next) -> Response {
     if let Some(response) = enforce_csrf(&state, &request) {
         return response;
     }
-    if let Some(response) = enforce_rate_limit(&state, &request) {
+    if let Some(response) = enforce_rate_limit(
+        &state,
+        request.method().clone(),
+        request.uri().path().to_owned(),
+        client_key(request.headers()),
+    )
+    .await
+    {
         return response;
     }
 
@@ -75,29 +47,68 @@ fn enforce_csrf(state: &AppState, request: &Request) -> Option<Response> {
     ))
 }
 
-fn enforce_rate_limit(state: &AppState, request: &Request) -> Option<Response> {
-    let policy = rate_limit_policy(request.method(), request.uri().path())?;
-    let peer_addr = request
-        .extensions()
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|ConnectInfo(addr)| addr.ip().to_string());
+async fn enforce_rate_limit(
+    state: &AppState,
+    method: Method,
+    path: String,
+    client_key: Option<String>,
+) -> Option<Response> {
+    let policy = rate_limit_policy(&method, &path)?;
     let key = format!(
         "{}:{}",
         policy.name,
-        client_key(
-            request.headers(),
-            peer_addr.as_deref(),
-            state.config.trust_proxy_headers
-        )
+        client_key.as_deref().unwrap_or("unknown")
     );
-    if state.rate_limiter.check(key, policy.limit, policy.window) {
-        None
-    } else {
-        Some(error_response(
+
+    match check_rate_limit(state, &key, policy.limit, policy.window).await {
+        Ok(true) => None,
+        Ok(false) => Some(error_response(
             StatusCode::TOO_MANY_REQUESTS,
             "too many requests",
-        ))
+        )),
+        Err(error) => {
+            tracing::error!(%error, "rate limit check failed");
+            Some(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "request guard failed",
+            ))
+        }
     }
+}
+
+async fn check_rate_limit(
+    state: &AppState,
+    key: &str,
+    limit: i64,
+    window: Duration,
+) -> Result<bool, sqlx::Error> {
+    let mut transaction = state.db.begin().await?;
+    sqlx::query("delete from rate_limit_hits where hit_at < now() - interval '10 minutes'")
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("select pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+        .bind(key)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query(
+        "delete from rate_limit_hits
+         where key = $1
+           and hit_at < now() - ($2::bigint * interval '1 second')",
+    )
+    .bind(key)
+    .bind(window.as_secs() as i64)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query("insert into rate_limit_hits (key) values ($1)")
+        .bind(key)
+        .execute(&mut *transaction)
+        .await?;
+    let hits: i64 = sqlx::query_scalar("select count(*) from rate_limit_hits where key = $1")
+        .bind(key)
+        .fetch_one(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    Ok(hits <= limit)
 }
 
 fn add_security_headers(headers: &mut HeaderMap) {
@@ -167,7 +178,7 @@ fn is_safe_method(method: &Method) -> bool {
 
 struct RateLimitPolicy {
     name: &'static str,
-    limit: usize,
+    limit: i64,
     window: Duration,
 }
 
@@ -228,6 +239,13 @@ fn rate_limit_policy(method: &Method, path: &str) -> Option<RateLimitPolicy> {
             window: Duration::from_secs(300),
         });
     }
+    if method == Method::POST && path.ends_with("/integrations/slack/install-url") {
+        return Some(RateLimitPolicy {
+            name: "integration_write",
+            limit: 20,
+            window: Duration::from_secs(300),
+        });
+    }
     if method == Method::POST && path.ends_with("/invitations") {
         return Some(RateLimitPolicy {
             name: "organization_invitation_write",
@@ -270,6 +288,13 @@ fn rate_limit_policy(method: &Method, path: &str) -> Option<RateLimitPolicy> {
             window: Duration::from_secs(60),
         });
     }
+    if method == Method::POST && path == "/v1/slack/events" {
+        return Some(RateLimitPolicy {
+            name: "slack_events",
+            limit: 600,
+            window: Duration::from_secs(60),
+        });
+    }
     if method == Method::POST && path.ends_with("/sync") {
         return Some(RateLimitPolicy {
             name: "provider_sync",
@@ -287,26 +312,15 @@ fn rate_limit_policy(method: &Method, path: &str) -> Option<RateLimitPolicy> {
     None
 }
 
-fn client_key<'a>(
-    headers: &'a HeaderMap,
-    peer_addr: Option<&'a str>,
-    trust_proxy_headers: bool,
-) -> &'a str {
-    if trust_proxy_headers
-        && let Some(forwarded) = ["fly-client-ip", "x-real-ip", "x-forwarded-for"]
-            .into_iter()
-            .find_map(|name| {
-                headers
-                    .get(name)
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(|value| value.split(',').next())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-            })
-    {
-        return forwarded;
-    }
-    peer_addr.unwrap_or("unknown")
+fn client_key(headers: &HeaderMap) -> Option<String> {
+    let address = headers
+        .get("x-real-ip")?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<IpAddr>()
+        .ok()?;
+    Some(format!("ip:{address}"))
 }
 
 fn error_response(status: StatusCode, message: &'static str) -> Response {
@@ -339,6 +353,23 @@ mod tests {
     }
 
     #[test]
+    fn uses_railway_client_address_and_ignores_spoofable_forwarding_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "203.0.113.10".parse().unwrap());
+        headers.insert("x-forwarded-for", "198.51.100.4".parse().unwrap());
+
+        assert_eq!(client_key(&headers).as_deref(), Some("ip:203.0.113.10"));
+    }
+
+    #[test]
+    fn rejects_invalid_railway_client_addresses() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "not-an-address".parse().unwrap());
+
+        assert_eq!(client_key(&headers), None);
+    }
+
+    #[test]
     fn rate_limits_expensive_routes() {
         assert!(rate_limit_policy(&Method::POST, "/v1/auth/cli/start").is_some());
         assert!(
@@ -357,20 +388,5 @@ mod tests {
         );
         assert!(rate_limit_policy(&Method::POST, "/v1/invitations/accept").is_some());
         assert!(rate_limit_policy(&Method::GET, "/v1/providers").is_none());
-    }
-
-    #[test]
-    fn ignores_forwarded_client_headers_unless_trusted() {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "203.0.113.10".parse().unwrap());
-
-        assert_eq!(
-            client_key(&headers, Some("198.51.100.3"), false),
-            "198.51.100.3"
-        );
-        assert_eq!(
-            client_key(&headers, Some("198.51.100.3"), true),
-            "203.0.113.10"
-        );
     }
 }

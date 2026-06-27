@@ -35,7 +35,6 @@ struct AppState {
     credential_cipher: credentials::CredentialCipher,
     provider_client: reqwest::Client,
     slack_client: Option<SlackClient>,
-    rate_limiter: Arc<security::RateLimiter>,
 }
 
 #[derive(Clone)]
@@ -48,13 +47,57 @@ struct Config {
     secure_cookies: bool,
     openai_base_url: String,
     slack: Option<SlackConfig>,
+    #[allow(dead_code)]
+    slack_cloud: Option<SlackCloudConfig>,
     posthog_webhook_secret: Option<String>,
     allow_global_posthog_webhook_secret: bool,
     posthog_ingestion_enabled: bool,
     resend_api_key: Option<String>,
     email_from: Option<String>,
     allowed_origins: Vec<String>,
-    trust_proxy_headers: bool,
+}
+
+#[derive(Clone)]
+#[allow(dead_code)]
+struct SlackCloudConfig {
+    client_id: String,
+    client_secret: String,
+    signing_secret: String,
+    redirect_uri: String,
+}
+
+impl SlackCloudConfig {
+    fn from_env() -> anyhow::Result<Option<Self>> {
+        Self::from_values(
+            optional_env("SLACK_CLIENT_ID")?,
+            optional_env("SLACK_CLIENT_SECRET")?,
+            optional_env("SLACK_SIGNING_SECRET")?,
+            optional_env("SLACK_REDIRECT_URI")?,
+        )
+    }
+
+    fn from_values(
+        client_id: Option<String>,
+        client_secret: Option<String>,
+        signing_secret: Option<String>,
+        redirect_uri: Option<String>,
+    ) -> anyhow::Result<Option<Self>> {
+        match (client_id, client_secret, signing_secret, redirect_uri) {
+            (None, None, None, None) => Ok(None),
+            (Some(client_id), Some(client_secret), Some(signing_secret), Some(redirect_uri)) => {
+                validate_slack_redirect_uri(&redirect_uri)?;
+                Ok(Some(Self {
+                    client_id,
+                    client_secret,
+                    signing_secret,
+                    redirect_uri,
+                }))
+            }
+            _ => anyhow::bail!(
+                "SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_SIGNING_SECRET, and SLACK_REDIRECT_URI must be set together"
+            ),
+        }
+    }
 }
 
 impl Config {
@@ -113,8 +156,8 @@ impl Config {
         }
 
         let slack = SlackConfig::from_env()?;
+        let slack_cloud = SlackCloudConfig::from_env()?;
         let allowed_origins = parse_origin_allowlist(&web_url)?;
-        let trust_proxy_headers = parse_bool_env("BELLA_TRUST_PROXY_HEADERS", false)?;
 
         Ok(Self {
             github_client_id,
@@ -125,15 +168,35 @@ impl Config {
             secure_cookies,
             openai_base_url,
             slack,
+            slack_cloud,
             posthog_webhook_secret,
             allow_global_posthog_webhook_secret,
             posthog_ingestion_enabled,
             resend_api_key,
             email_from,
             allowed_origins,
-            trust_proxy_headers,
         })
     }
+}
+
+fn validate_slack_redirect_uri(value: &str) -> anyhow::Result<()> {
+    let url = reqwest::Url::parse(value)
+        .map_err(|error| anyhow::anyhow!("invalid SLACK_REDIRECT_URI: {error}"))?;
+    if url.fragment().is_some() {
+        anyhow::bail!("SLACK_REDIRECT_URI must not include a fragment");
+    }
+    if url.query().is_some() {
+        anyhow::bail!("SLACK_REDIRECT_URI must not include a query string");
+    }
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" if is_localhost_url(&url) => Ok(()),
+        _ => anyhow::bail!("SLACK_REDIRECT_URI must use HTTPS outside local development"),
+    }
+}
+
+fn is_localhost_url(url: &reqwest::Url) -> bool {
+    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
 }
 
 fn parse_bool_env(name: &str, default: bool) -> anyhow::Result<bool> {
@@ -181,6 +244,21 @@ fn parse_csv_env(name: &str) -> anyhow::Result<Vec<String>> {
             .collect()),
         Err(env::VarError::NotPresent) => Ok(Vec::new()),
         Err(error) => Err(error.into()),
+    }
+}
+
+fn optional_env(name: &str) -> anyhow::Result<Option<String>> {
+    match env::var(name) {
+        Ok(value) => {
+            let value = value.trim().to_owned();
+            if value.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(value))
+            }
+        }
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(error) => anyhow::bail!("could not read {name}: {error}"),
     }
 }
 
@@ -238,7 +316,6 @@ async fn main() -> anyhow::Result<()> {
         credential_cipher,
         provider_client,
         slack_client,
-        rate_limiter: Arc::new(security::RateLimiter::new()),
     };
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(move |origin, _| {
@@ -267,6 +344,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/v1/auth/github/start", get(auth::web_start))
         .route("/v1/auth/github/callback", get(auth::callback))
+        .route("/v1/slack/oauth/callback", get(slack::oauth_callback))
+        .route("/v1/slack/events", post(slack::events))
         .route("/v1/auth/logout", post(auth::logout))
         .route("/v1/auth/token/revoke", post(auth::revoke_token))
         .route("/v1/auth/cli/start", post(auth::cli_start))
@@ -351,6 +430,14 @@ async fn main() -> anyhow::Result<()> {
             post(slack::send_test_message),
         )
         .route(
+            "/v1/organizations/:organization_id/integrations/slack",
+            get(slack::status),
+        )
+        .route(
+            "/v1/organizations/:organization_id/integrations/slack/install-url",
+            post(slack::install_url),
+        )
+        .route(
             "/v1/organizations/:organization_id/members",
             get(organizations::members),
         )
@@ -427,5 +514,80 @@ async fn shutdown_signal() {
     tokio::select! {
         () = ctrl_c => {},
         () = terminate => {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SlackCloudConfig, validate_slack_redirect_uri};
+
+    #[test]
+    fn slack_cloud_config_is_optional_when_unset() {
+        let config = SlackCloudConfig::from_values(None, None, None, None).unwrap();
+
+        assert!(config.is_none());
+    }
+
+    #[test]
+    fn slack_cloud_config_requires_complete_values() {
+        let result = SlackCloudConfig::from_values(
+            Some("client-id".to_owned()),
+            Some("client-secret".to_owned()),
+            None,
+            Some("https://api.bella.example/v1/slack/oauth/callback".to_owned()),
+        );
+        let Err(error) = result else {
+            panic!("expected incomplete Slack cloud config to fail");
+        };
+
+        assert!(error.to_string().contains("must be set together"));
+    }
+
+    #[test]
+    fn slack_cloud_config_accepts_https_redirect_uri() {
+        let config = SlackCloudConfig::from_values(
+            Some("client-id".to_owned()),
+            Some("client-secret".to_owned()),
+            Some("signing-secret".to_owned()),
+            Some("https://api.bella.example/v1/slack/oauth/callback".to_owned()),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(config.client_id, "client-id");
+        assert_eq!(config.client_secret, "client-secret");
+        assert_eq!(config.signing_secret, "signing-secret");
+        assert_eq!(
+            config.redirect_uri,
+            "https://api.bella.example/v1/slack/oauth/callback"
+        );
+    }
+
+    #[test]
+    fn slack_cloud_config_allows_localhost_http_for_development() {
+        validate_slack_redirect_uri("http://127.0.0.1:3000/v1/slack/oauth/callback").unwrap();
+        validate_slack_redirect_uri("http://localhost:3000/v1/slack/oauth/callback").unwrap();
+    }
+
+    #[test]
+    fn slack_cloud_config_rejects_insecure_non_local_redirect_uri() {
+        let error = validate_slack_redirect_uri("http://api.bella.example/v1/slack/oauth/callback")
+            .unwrap_err();
+
+        assert!(error.to_string().contains("must use HTTPS"));
+    }
+
+    #[test]
+    fn slack_cloud_config_rejects_query_or_fragment_redirect_uri() {
+        assert!(
+            validate_slack_redirect_uri("https://api.bella.example/v1/slack/oauth/callback?next=/")
+                .is_err()
+        );
+        assert!(
+            validate_slack_redirect_uri(
+                "https://api.bella.example/v1/slack/oauth/callback#fragment"
+            )
+            .is_err()
+        );
     }
 }

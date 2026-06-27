@@ -9,6 +9,146 @@ Each self-hosted operator creates and owns their own Slack app. Bella provides
 a reusable manifest so setup is consistent and does not require manually
 configuring scopes.
 
+Bella Cloud will use a different setup path. Cloud users should not create a
+Slack app, copy bot tokens, or paste channel IDs into Bella. The goal is a
+single guided installation from the Bella dashboard:
+
+1. The user logs into Bella and opens **Integrations**.
+2. The user selects **Install Bella**.
+3. Bella redirects the user to Slack's app installation flow.
+4. The user approves the Bella Slack app for their workspace.
+5. Slack redirects back to Bella and Bella marks the workspace as connected.
+6. The user invites Bella to the incident channel:
+
+   ```text
+   /invite @Bella
+   ```
+
+7. Bella detects the invited channel, sends a confirmation message, and uses
+   that channel for future incident threads.
+
+This keeps the customer-facing setup to Slack authorization plus a normal
+channel invite. It also keeps production Slack credentials out of the dashboard,
+logs, docs, and repository.
+
+## Bella Cloud Slack Plan
+
+The cloud integration should be implemented as a separate credential model from
+the self-hosted environment variables described below.
+
+### Product Flow
+
+- **Install from Bella:** Organization owners and admins can start the Slack
+  install flow from the Bella web app.
+- **Authorize in Slack:** Slack handles workspace selection and administrator
+  approval.
+- **Return to Bella:** Bella records the connected workspace and shows the next
+  action.
+- **Invite Bella:** The user invites Bella to each incident channel where it
+  should post.
+- **Confirm delivery:** Bella posts a short confirmation message in newly
+  connected channels.
+- **Connect PostHog:** The user creates or rotates the PostHog webhook secret in
+  Bella and configures it in PostHog.
+- **Create incident threads:** New PostHog incidents create a root Slack message
+  and Bella adds follow-up context in the Slack thread as investigation jobs
+  complete.
+
+### Backend Shape
+
+- Store one Slack installation per Bella organization and Slack workspace.
+- Store Slack workspace metadata, granted scopes, bot identity, installation
+  status, and the Bella user who installed it.
+- Store Slack bot credentials encrypted at rest. Do not expose credentials
+  through API responses, UI state, logs, CLI output, or documentation.
+- Store delivery targets separately from installations. A delivery target is a
+  Slack channel Bella has been invited to and is allowed to post in.
+- Store incident Slack threads separately from incidents so future versions can
+  support more than one target channel per incident.
+- Replace the singleton environment-based Slack client in cloud paths with a
+  per-installation client loaded for each delivery job.
+- Keep delivery jobs durable and retryable. Failed Slack sends should update job
+  state without dropping the incident or losing the thread mapping.
+
+### Slack App Configuration
+
+The first cloud app should request the minimum bot permissions needed for this
+workflow:
+
+```text
+chat:write
+channels:read
+groups:read
+```
+
+Do not request channel history or broad posting permissions for the initial
+cloud release. Requiring `/invite @Bella` is an intentional consent boundary:
+Bella only posts where the workspace has explicitly added the bot.
+
+The cloud app needs:
+
+- OAuth redirect handling for installation.
+- Signed Slack request verification for inbound Slack callbacks.
+- Event handling for app uninstall or token revocation.
+- Channel discovery when Bella is invited to a channel, with a fallback refresh
+  path from the dashboard.
+
+Cloud deployments must provide the Slack app client ID, client secret, signing
+secret, and redirect URI through the deployment secret manager. These values are
+an all-or-nothing configuration group: Bella should either start with Slack
+Cloud disabled or with the complete Slack app configuration. The redirect URI
+must be HTTPS outside local development and must not include query strings or
+fragments.
+
+### Delivery Behavior
+
+When PostHog sends a valid webhook:
+
+1. Bella normalizes the signal and upserts the open incident by organization,
+   source, and fingerprint.
+2. Bella stores the raw signal and an incident event.
+3. If this is a new incident, Bella enqueues a Slack root-message delivery job.
+4. The worker loads active Slack delivery targets for the organization.
+5. The worker posts the root message to each active target and stores the Slack
+   channel ID and thread timestamp.
+6. Later investigation jobs post evidence, summaries, and handoff context into
+   the stored thread.
+
+The first production version can post one root message plus deterministic status
+updates. Richer agent-generated context can be added behind the same thread job
+model once the investigation pipeline is ready.
+
+### Implementation Order
+
+1. Fix the current incident delivery worker claim query before building on it.
+2. Add database tables for Slack installations, delivery targets, OAuth state,
+   inbound Slack event idempotency, and incident thread mappings.
+3. Add Slack OAuth start and callback API routes.
+4. Add Slack event ingestion with signature verification and idempotent event
+   handling.
+5. Add cloud Slack integration status to the web app.
+6. Update the worker to resolve Slack credentials and targets from the database.
+7. Add PostHog-to-Slack end-to-end tests using fake Slack responses.
+8. Keep the self-hosted environment-based path working until there is a clear
+   migration path for self-hosted operators.
+
+### Security Notes
+
+- Treat Slack OAuth state, inbound Slack callbacks, and PostHog webhooks as
+  untrusted input.
+- Verify Slack callbacks before parsing business actions.
+- Use short-lived install state and bind it to the Bella organization and user
+  that initiated installation.
+- Encrypt stored Slack credentials with Bella's existing credential encryption
+  path.
+- Never include raw Slack credentials in structured logs, error responses,
+  screenshots, docs, or client-rendered data.
+- Store external event IDs and delivery dedupe keys so Slack retries and Bella
+  worker retries are idempotent.
+- Mark installations as needing attention when Slack reports revocation,
+  uninstall, missing scope, channel removal, or posting failures that require
+  user action.
+
 ## What You Need
 
 - A running Bella API, worker, and Postgres database.
@@ -178,16 +318,17 @@ Deploy Bella behind a public HTTPS URL, or use a temporary HTTPS tunnel during
 development. Configure Bella's generated webhook URL in PostHog, not an
 internal container hostname.
 
-## Current Limits
+## Current Self-Hosted Limits
 
-This is the self-hosted outbound Slack MVP. The following are planned but not
-available yet:
+This guide covers the environment-based, outbound Slack path for one
+self-hosted organization. It does not provide guided token entry or channel
+selection in the dashboard.
 
-- Guided token entry and channel selection in the Bella dashboard.
-- Per-organization encrypted Slack installations stored in Bella.
-- Slack thread actions, commands, and inbound events.
-- Bella Cloud OAuth installation.
+Bella Cloud has a separate per-organization implementation with OAuth,
+encrypted workspace credentials, signed Slack events, and channel discovery
+from `/invite @Bella`. Operators preparing that path for a hosted QA
+environment should follow the
+[Slack Cloud QA deployment runbook](../deployment/slack-cloud-qa.md).
 
-The current environment-based setup is deliberately simple and deterministic
-for one self-hosted organization. Cloud OAuth will use a separate,
-per-organization credential model.
+Slack thread actions, commands, channel-invite confirmation messages, and
+richer investigation follow-ups are not yet implemented.

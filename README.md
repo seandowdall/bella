@@ -117,6 +117,7 @@ Full setup guides:
 - [Contributor OAuth setup](apps/docs/contributors/github-oauth.md)
 - [Self-hosted OAuth setup](apps/docs/self-hosting/github-oauth.md)
 - [Self-hosted Slack incident delivery](apps/docs/self-hosting/slack.md)
+- [Slack Cloud QA deployment](apps/docs/deployment/slack-cloud-qa.md)
 - [OpenAI ingestion](apps/docs/ingestion/openai.md)
 - [PostHog live incident dogfood](apps/docs/ingestion/posthog-dogfood.md)
 

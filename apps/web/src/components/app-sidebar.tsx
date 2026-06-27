@@ -7,7 +7,6 @@ import {
   Building2Icon,
   CableIcon,
   LayoutDashboardIcon,
-  PlugIcon,
   SettingsIcon,
   UserIcon,
 } from "lucide-react";
@@ -43,7 +42,6 @@ const settingsNavigation = [
   { title: "Profile", icon: UserIcon, href: "/settings" },
   { title: "Organization", icon: Building2Icon, href: "/settings/organization" },
   { title: "AI", icon: BotIcon, href: "/settings/ai" },
-  { title: "Integrations", icon: PlugIcon, href: "/settings/integrations" },
 ];
 
 type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {

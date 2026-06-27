@@ -16,6 +16,7 @@ bella-ingestion.workspace = true
 bella-slack.workspace = true
 chrono.workspace = true
 dotenvy.workspace = true
+hmac.workspace = true
 rand.workspace = true
 reqwest.workspace = true
 serde.workspace = true
