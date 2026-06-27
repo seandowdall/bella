@@ -5,7 +5,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
-use axum_extra::extract::cookie::CookieJar;
+use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bella_slack::{PostedMessage, SlackBotToken, SlackClientError, post_test_message_with_client};
 use chrono::{Duration as ChronoDuration, Utc};
@@ -23,6 +23,7 @@ use crate::{
 };
 
 const SLACK_OAUTH_SCOPE: &str = "chat:write,channels:read,groups:read";
+const SLACK_OAUTH_BROWSER_COOKIE: &str = "bella_slack_oauth_browser";
 const SLACK_OAUTH_STATE_TTL_MINUTES: i64 = 10;
 const SLACK_SIGNATURE_VERSION: &str = "v0";
 const SLACK_SIGNATURE_MAX_AGE_SECONDS: i64 = 60 * 5;
@@ -77,6 +78,7 @@ pub struct CallbackQuery {
 struct SlackOAuthState {
     organization_id: Uuid,
     user_id: Uuid,
+    browser_nonce_hash: String,
     return_to: Option<String>,
 }
 
@@ -156,7 +158,7 @@ pub async fn install_url(
     jar: CookieJar,
     headers: HeaderMap,
     request: Option<Json<InstallUrlRequest>>,
-) -> Result<Json<InstallUrlResponse>, SlackError> {
+) -> Result<(CookieJar, Json<InstallUrlResponse>), SlackError> {
     let user = authenticated_user(&state, &jar, &headers).await?;
     require_admin_membership(&state, user.id, organization_id).await?;
     let slack_cloud = state
@@ -167,41 +169,64 @@ pub async fn install_url(
     cleanup_expired_slack_oauth_states(&state).await?;
 
     let oauth_state = random_token();
+    let browser_nonce = jar
+        .get(SLACK_OAUTH_BROWSER_COOKIE)
+        .map(|cookie| cookie.value().to_owned())
+        .unwrap_or_else(random_token);
     let expires_in = SLACK_OAUTH_STATE_TTL_MINUTES * 60;
     let return_to = request
         .and_then(|Json(request)| request.return_to)
         .filter(|value| is_safe_return_to(value, &state.config.web_url));
     sqlx::query(
         "insert into slack_oauth_states
-         (state_hash, organization_id, user_id, return_to, expires_at)
-         values ($1, $2, $3, $4, $5)",
+         (state_hash, organization_id, user_id, browser_nonce_hash, return_to, expires_at)
+         values ($1, $2, $3, $4, $5, $6)",
     )
     .bind(hash_token(&oauth_state))
     .bind(organization_id)
     .bind(user.id)
+    .bind(hash_token(&browser_nonce))
     .bind(return_to)
     .bind(Utc::now() + ChronoDuration::minutes(SLACK_OAUTH_STATE_TTL_MINUTES))
     .execute(&state.db)
     .await?;
 
-    Ok(Json(InstallUrlResponse {
-        install_url: build_slack_install_url(slack_cloud, &oauth_state)?,
-        expires_in,
-    }))
+    let cookie = Cookie::build((SLACK_OAUTH_BROWSER_COOKIE, browser_nonce))
+        .path("/")
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .secure(state.config.secure_cookies)
+        .max_age(time::Duration::minutes(SLACK_OAUTH_STATE_TTL_MINUTES))
+        .build();
+    Ok((
+        jar.add(cookie),
+        Json(InstallUrlResponse {
+            install_url: build_slack_install_url(slack_cloud, &oauth_state)?,
+            expires_in,
+        }),
+    ))
 }
 
 pub async fn oauth_callback(
     State(state): State<AppState>,
     Query(query): Query<CallbackQuery>,
-) -> Result<Redirect, SlackError> {
-    let redirect = match complete_oauth_callback(&state, query).await {
+    jar: CookieJar,
+) -> Result<(CookieJar, Redirect), SlackError> {
+    let browser_nonce = jar
+        .get(SLACK_OAUTH_BROWSER_COOKIE)
+        .map(|cookie| cookie.value().to_owned());
+    let redirect = match complete_oauth_callback(&state, query, browser_nonce.as_deref()).await {
         Ok(return_to) => redirect_with_slack_status(&return_to, "installed"),
         Err(error) => {
             tracing::warn!(error = ?error, "Slack OAuth callback failed");
             redirect_with_slack_status(&state.config.web_url, "error")
         }
     };
-    Ok(Redirect::to(&redirect))
+    let removal = Cookie::build(SLACK_OAUTH_BROWSER_COOKIE)
+        .path("/")
+        .secure(state.config.secure_cookies)
+        .build();
+    Ok((jar.remove(removal), Redirect::to(&redirect)))
 }
 
 pub async fn events(
@@ -377,18 +402,22 @@ pub async fn status(
 async fn complete_oauth_callback(
     state: &AppState,
     query: CallbackQuery,
+    browser_nonce: Option<&str>,
 ) -> Result<String, SlackError> {
     let slack_cloud = state
         .config
         .slack_cloud
         .as_ref()
         .ok_or(SlackError::CloudNotConfigured)?;
+    let oauth_state = query.state.ok_or(SlackError::InvalidOAuthState)?;
+    let flow = consume_slack_oauth_state(state, &oauth_state).await?;
+    if !browser_nonce_matches(browser_nonce, &flow.browser_nonce_hash) {
+        return Err(SlackError::InvalidOAuthState);
+    }
     if query.error.is_some() {
         return Err(SlackError::OAuthRejected);
     }
     let code = query.code.ok_or(SlackError::InvalidOAuthState)?;
-    let oauth_state = query.state.ok_or(SlackError::InvalidOAuthState)?;
-    let flow = consume_slack_oauth_state(state, &oauth_state).await?;
     let response = exchange_slack_oauth_code(state, slack_cloud, &code).await?;
     store_slack_installation(state, flow.organization_id, flow.user_id, response).await?;
     Ok(flow.return_to.unwrap_or_else(|| {
@@ -409,7 +438,7 @@ async fn consume_slack_oauth_state(
          where state_hash = $1
            and expires_at > now()
            and consumed_at is null
-         returning organization_id, user_id, return_to",
+         returning organization_id, user_id, browser_nonce_hash, return_to",
     )
     .bind(hash_token(oauth_state))
     .fetch_optional(&state.db)
@@ -419,8 +448,13 @@ async fn consume_slack_oauth_state(
     Ok(SlackOAuthState {
         organization_id: row.get("organization_id"),
         user_id: row.get("user_id"),
+        browser_nonce_hash: row.get("browser_nonce_hash"),
         return_to: row.get("return_to"),
     })
+}
+
+fn browser_nonce_matches(browser_nonce: Option<&str>, expected_hash: &str) -> bool {
+    browser_nonce.is_some_and(|nonce| hash_token(nonce) == expected_hash)
 }
 
 async fn exchange_slack_oauth_code(
@@ -1260,10 +1294,10 @@ impl IntoResponse for SlackError {
 mod tests {
     use super::{
         SLACK_OAUTH_SCOPE, SlackEventChannel, SlackEventChannelValue, SlackEventPayload,
-        SlackInstallationRef, SlackOAuthAccessResponse, SlackOAuthTeam, build_slack_install_url,
-        decode_hex, is_safe_return_to, normalize_slack_channel_type, parse_scope_list,
-        redirect_with_slack_status, target_from_slack_event, validate_oauth_access_response,
-        verify_slack_signature,
+        SlackInstallationRef, SlackOAuthAccessResponse, SlackOAuthTeam, browser_nonce_matches,
+        build_slack_install_url, decode_hex, hash_token, is_safe_return_to,
+        normalize_slack_channel_type, parse_scope_list, redirect_with_slack_status,
+        target_from_slack_event, validate_oauth_access_response, verify_slack_signature,
     };
     use crate::SlackCloudConfig;
     use axum::http::HeaderMap;
@@ -1273,6 +1307,18 @@ mod tests {
     use uuid::Uuid;
 
     type TestHmacSha256 = Hmac<Sha256>;
+
+    #[test]
+    fn requires_the_browser_nonce_that_started_slack_oauth() {
+        let expected_hash = hash_token("browser-nonce");
+
+        assert!(browser_nonce_matches(Some("browser-nonce"), &expected_hash));
+        assert!(!browser_nonce_matches(None, &expected_hash));
+        assert!(!browser_nonce_matches(
+            Some("other-browser"),
+            &expected_hash
+        ));
+    }
 
     #[test]
     fn builds_slack_install_url_with_minimal_bot_scopes() {

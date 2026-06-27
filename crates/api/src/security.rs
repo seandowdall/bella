@@ -5,7 +5,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use std::time::Duration;
+use std::{net::IpAddr, time::Duration};
 
 use crate::AppState;
 
@@ -19,7 +19,7 @@ pub async fn guard(State(state): State<AppState>, request: Request, next: Next) 
         &state,
         request.method().clone(),
         request.uri().path().to_owned(),
-        client_key(request.headers()).map(str::to_owned),
+        client_key(request.headers()),
     )
     .await
     {
@@ -83,6 +83,9 @@ async fn check_rate_limit(
     window: Duration,
 ) -> Result<bool, sqlx::Error> {
     let mut transaction = state.db.begin().await?;
+    sqlx::query("delete from rate_limit_hits where hit_at < now() - interval '10 minutes'")
+        .execute(&mut *transaction)
+        .await?;
     sqlx::query("select pg_advisory_xact_lock(hashtextextended($1::text, 0))")
         .bind(key)
         .execute(&mut *transaction)
@@ -295,17 +298,15 @@ fn rate_limit_policy(method: &Method, path: &str) -> Option<RateLimitPolicy> {
     None
 }
 
-fn client_key(headers: &HeaderMap) -> Option<&str> {
-    ["fly-client-ip", "x-real-ip", "x-forwarded-for"]
-        .into_iter()
-        .find_map(|name| {
-            headers
-                .get(name)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.split(',').next())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
+fn client_key(headers: &HeaderMap) -> Option<String> {
+    let address = headers
+        .get("x-real-ip")?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<IpAddr>()
+        .ok()?;
+    Some(format!("ip:{address}"))
 }
 
 fn error_response(status: StatusCode, message: &'static str) -> Response {
@@ -314,7 +315,7 @@ fn error_response(status: StatusCode, message: &'static str) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{has_session_cookie, parse_origin, rate_limit_policy};
+    use super::{client_key, has_session_cookie, parse_origin, rate_limit_policy};
     use axum::http::{HeaderMap, Method, header};
 
     #[test]
@@ -335,6 +336,23 @@ mod tests {
                 .unwrap(),
         );
         assert!(has_session_cookie(&headers));
+    }
+
+    #[test]
+    fn uses_railway_client_address_and_ignores_spoofable_forwarding_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "203.0.113.10".parse().unwrap());
+        headers.insert("x-forwarded-for", "198.51.100.4".parse().unwrap());
+
+        assert_eq!(client_key(&headers).as_deref(), Some("ip:203.0.113.10"));
+    }
+
+    #[test]
+    fn rejects_invalid_railway_client_addresses() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "not-an-address".parse().unwrap());
+
+        assert_eq!(client_key(&headers), None);
     }
 
     #[test]

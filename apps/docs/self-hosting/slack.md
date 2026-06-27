@@ -318,17 +318,17 @@ Deploy Bella behind a public HTTPS URL, or use a temporary HTTPS tunnel during
 development. Configure Bella's generated webhook URL in PostHog, not an
 internal container hostname.
 
-## Current Limits
+## Current Self-Hosted Limits
 
-This is the self-hosted outbound Slack MVP. The following are planned but not
-available yet:
+This guide covers the environment-based, outbound Slack path for one
+self-hosted organization. It does not provide guided token entry or channel
+selection in the dashboard.
 
-- Guided token entry and channel selection in the Bella dashboard.
-- Per-organization encrypted Slack installations stored in Bella.
-- Slack Cloud OAuth installation.
-- Slack Cloud channel discovery from `/invite @Bella`.
-- Slack thread actions, commands, and richer inbound events.
+Bella Cloud has a separate per-organization implementation with OAuth,
+encrypted workspace credentials, signed Slack events, and channel discovery
+from `/invite @Bella`. Operators preparing that path for a hosted QA
+environment should follow the
+[Slack Cloud QA deployment runbook](../deployment/slack-cloud-qa.md).
 
-The current environment-based setup is deliberately simple and deterministic
-for one self-hosted organization. Cloud OAuth will use a separate,
-per-organization credential model.
+Slack thread actions, commands, channel-invite confirmation messages, and
+richer investigation follow-ups are not yet implemented.

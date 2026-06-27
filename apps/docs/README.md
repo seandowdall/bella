@@ -3,6 +3,7 @@
 ## Architecture
 
 - [Multi-tenant architecture](architecture/multi-tenancy.md)
+- [Incident delivery architecture](architecture/incident-delivery.md)
 
 ## Contributors
 
@@ -12,3 +13,7 @@
 
 - [Configure GitHub OAuth](self-hosting/github-oauth.md)
 - [Configure Slack incident delivery](self-hosting/slack.md)
+
+## Deployment
+
+- [Deploy Slack Cloud to QA](deployment/slack-cloud-qa.md)
