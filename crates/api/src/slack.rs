@@ -422,7 +422,7 @@ async fn complete_oauth_callback(
     store_slack_installation(state, flow.organization_id, flow.user_id, response).await?;
     Ok(flow.return_to.unwrap_or_else(|| {
         format!(
-            "{}/settings/integrations",
+            "{}/integrations",
             state.config.web_url.trim_end_matches('/')
         )
     }))
@@ -1361,15 +1361,15 @@ mod tests {
     #[test]
     fn accepts_return_urls_only_on_web_origin() {
         assert!(is_safe_return_to(
-            "https://app.bella.example/settings/integrations",
+            "https://app.bella.example/integrations",
             "https://app.bella.example"
         ));
         assert!(!is_safe_return_to(
-            "https://evil.example/settings/integrations",
+            "https://evil.example/integrations",
             "https://app.bella.example"
         ));
         assert!(!is_safe_return_to(
-            "/settings/integrations",
+            "/integrations",
             "https://app.bella.example"
         ));
     }
@@ -1377,18 +1377,12 @@ mod tests {
     #[test]
     fn appends_slack_status_to_redirect_url() {
         assert_eq!(
-            redirect_with_slack_status(
-                "https://app.bella.example/settings/integrations",
-                "installed"
-            ),
-            "https://app.bella.example/settings/integrations?slack=installed"
+            redirect_with_slack_status("https://app.bella.example/integrations", "installed"),
+            "https://app.bella.example/integrations?slack=installed"
         );
         assert_eq!(
-            redirect_with_slack_status(
-                "https://app.bella.example/settings/integrations?tab=chat",
-                "error"
-            ),
-            "https://app.bella.example/settings/integrations?tab=chat&slack=error"
+            redirect_with_slack_status("https://app.bella.example/integrations?tab=chat", "error"),
+            "https://app.bella.example/integrations?tab=chat&slack=error"
         );
     }
 
