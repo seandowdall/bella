@@ -4,7 +4,6 @@ use std::{env, net::SocketAddr, time::Duration};
 
 use axum::{Router, routing::get};
 use bella_ingestion::posthog::PosthogIngestor;
-use bella_slack::{SlackClient, SlackConfig};
 use sqlx::Row;
 use tracing_subscriber::{EnvFilter, fmt};
 use uuid::Uuid;
@@ -36,9 +35,6 @@ async fn main() -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
-    let slack_client =
-        SlackConfig::from_env()?.map(|config| SlackClient::new(client.clone(), config));
-
     let db = bella_db::connect(&database_url).await?;
     bella_db::run_migrations(&db).await?;
     let ingestor = bella_ingestion::openai::OpenAiIngestor::new(
@@ -49,12 +45,12 @@ async fn main() -> anyhow::Result<()> {
     );
     let posthog_ingestor = PosthogIngestor::new(
         db.clone(),
-        client,
-        credential_cipher,
+        client.clone(),
+        credential_cipher.clone(),
         posthog_ingestion_enabled,
     );
     let incident_delivery =
-        incident_delivery::IncidentDeliveryWorker::new(db.clone(), slack_client);
+        incident_delivery::IncidentDeliveryWorker::new(db.clone(), client, credential_cipher);
     spawn_health_server();
 
     tracing::info!(

@@ -12,6 +12,8 @@ import type {
   PosthogSyncOutcome,
   ProviderAccount,
   ProviderDefinition,
+  SlackInstallUrl,
+  SlackStatus,
   OrganizationMember,
   OrganizationMembers,
   OrganizationRole,
@@ -619,6 +621,39 @@ export async function sendSlackTestMessage(organizationId: string): Promise<Slac
     throw new Error(await errorMessage(response, "Could not send the Slack test message."));
   }
   return response.json() as Promise<SlackTestMessage>;
+}
+
+export async function getSlackStatus(organizationId: string): Promise<SlackStatus> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/slack`,
+    { credentials: "include" },
+  );
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not load Slack status."));
+  }
+  return response.json() as Promise<SlackStatus>;
+}
+
+export async function createSlackInstallUrl({
+  organizationId,
+  returnTo,
+}: {
+  organizationId: string;
+  returnTo?: string;
+}): Promise<SlackInstallUrl> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/slack/install-url`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ return_to: returnTo ?? null }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not start Slack install."));
+  }
+  return response.json() as Promise<SlackInstallUrl>;
 }
 
 export function getLoginUrl(returnTo = `${window.location.origin}/`): string {

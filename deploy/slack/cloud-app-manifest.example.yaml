@@ -1,0 +1,37 @@
+# Bella Cloud Slack app template.
+#
+# Before importing this manifest, replace app.qa.example.com and
+# api.qa.example.com with the public web and API hostnames for this environment.
+# Use a separate Slack app and separate credentials for QA and production.
+
+display_information:
+  name: Bella QA
+  description: Sends Bella incident reports and investigation updates to Slack.
+  background_color: "#111827"
+
+features:
+  bot_user:
+    display_name: Bella QA
+    always_online: false
+
+oauth_config:
+  redirect_urls:
+    - https://app.qa.example.com/api/v1/slack/oauth/callback
+  scopes:
+    bot:
+      - chat:write
+      - channels:read
+      - groups:read
+
+settings:
+  event_subscriptions:
+    request_url: https://api.qa.example.com/v1/slack/events
+    bot_events:
+      - app_uninstalled
+      - member_joined_channel
+      - tokens_revoked
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
