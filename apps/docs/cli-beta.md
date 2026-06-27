@@ -3,11 +3,45 @@
 The Bella CLI is distributed as a beta for technical users and self-hosted
 operators. GitHub OAuth is the only supported login method during the beta.
 
-## Install From GitHub Releases
+## Automatic Channel Releases
 
-Download the release archive for your platform from a `bella-cli-v*` GitHub
-release, verify the checksum, then install the `bella` binary somewhere on your
-`PATH`:
+The CLI beta is released automatically when CLI-relevant changes merge:
+
+- Merges to `qa` publish the `bella-cli-qa` prerelease.
+- Merges to `main` publish the `bella-cli-prod` prerelease.
+
+The release workflow only runs for changes to the CLI, release workflow,
+installer, lockfile, or CLI beta docs.
+
+## Install With The Script
+
+Install the latest QA channel:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/seandowdall/bella/main/scripts/install-bella-cli.sh | sh -s -- --channel qa
+```
+
+Install the latest production channel:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/seandowdall/bella/main/scripts/install-bella-cli.sh | sh -s -- --channel prod
+```
+
+The installer detects macOS Apple Silicon, macOS Intel, and Linux x86_64,
+downloads the matching release asset, verifies the SHA-256 checksum, and installs
+the `bella` binary into `/usr/local/bin` by default.
+
+Use a custom install directory when needed:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/seandowdall/bella/main/scripts/install-bella-cli.sh | sh -s -- --channel qa --install-dir "$HOME/.local/bin"
+```
+
+## Manual Install From GitHub Releases
+
+Download the release archive for your platform from the `bella-cli-qa` or
+`bella-cli-prod` GitHub release, verify the checksum, then install the `bella`
+binary somewhere on your `PATH`:
 
 ```sh
 shasum -a 256 -c bella-cli-linux-x86_64.tar.gz.sha256
@@ -21,7 +55,7 @@ On macOS, choose the `macos-aarch64` archive for Apple Silicon or the
 You can also install from source when Rust is available:
 
 ```sh
-cargo install --git https://github.com/seandowdall/bella --tag bella-cli-v0.1.0 bella-cli
+cargo install --git https://github.com/seandowdall/bella --branch main bella-cli
 ```
 
 ## Environments
