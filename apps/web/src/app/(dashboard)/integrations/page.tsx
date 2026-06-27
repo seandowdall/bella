@@ -70,7 +70,18 @@ export default function IntegrationsPage() {
       setError("");
       try {
         const nextIntegrations = await getIntegrations(selectedOrganizationId);
-        if (!cancelled) setIntegrations(nextIntegrations);
+        if (!cancelled) {
+          const nextPosthog = nextIntegrations.find(
+            (integration) => integration.integration_type === "posthog",
+          );
+          const savedHost = nextPosthog ? stringMetadata(nextPosthog.metadata, "posthog_host") : "";
+          const savedProjectId = nextPosthog
+            ? stringMetadata(nextPosthog.metadata, "posthog_project_id")
+            : "";
+          if (savedHost) setPosthogHost(savedHost);
+          if (savedProjectId) setPosthogProjectId(savedProjectId);
+          setIntegrations(nextIntegrations);
+        }
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Could not load integrations.");
@@ -84,14 +95,6 @@ export default function IntegrationsPage() {
       cancelled = true;
     };
   }, [selectedOrganizationId]);
-
-  useEffect(() => {
-    if (!posthog) return;
-    const savedHost = stringMetadata(posthog.metadata, "posthog_host");
-    const savedProjectId = stringMetadata(posthog.metadata, "posthog_project_id");
-    if (savedHost) setPosthogHost(savedHost);
-    if (savedProjectId) setPosthogProjectId(savedProjectId);
-  }, [posthog]);
 
   const connectPosthog = async () => {
     if (!selectedOrganizationId) return;
