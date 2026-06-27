@@ -421,18 +421,31 @@ fn normalize_signal(payload: &Value) -> NormalizedPosthogSignal {
     .map(|value| value.with_timezone(&Utc))
     .unwrap_or_else(Utc::now);
     let external_url = first_string(payload, &[&["external_url"], &["url"], &["issue", "url"]])
+        .filter(|value| !value.starts_with("sha256:"))
         .map(|value| truncate(value, 500));
     let entity_key = first_string(
         payload,
-        &[
-            &["properties", "service"],
-            &["properties", "component"],
-            &["properties", "$current_url"],
-            &["distinct_id"],
-        ],
+        &[&["properties", "service"], &["properties", "component"]],
     )
     .map(|value| truncate(value, 120))
     .filter(|value| !value.is_empty())
+    .or_else(|| {
+        first_string(
+            payload,
+            &[
+                &["properties", "$current_url"],
+                &["properties", "$pathname"],
+                &["properties", "current_url"],
+                &["properties", "url"],
+                &["properties", "path"],
+                &["properties", "pathname"],
+                &["properties", "referrer"],
+                &["properties", "$referrer"],
+            ],
+        )
+        .map(hashed_entity_key)
+    })
+    .or_else(|| string_at(payload, &["distinct_id_hash"]).map(|value| truncate(value, 120)))
     .unwrap_or_else(|| fingerprint.clone());
 
     NormalizedPosthogSignal {
@@ -463,9 +476,22 @@ fn string_at<'a>(payload: &'a Value, path: &[&str]) -> Option<&'a str> {
 }
 
 fn payload_hash(payload: &Value) -> String {
+    stable_hash(&payload.to_string())
+}
+
+fn stable_hash(value: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(payload.to_string().as_bytes());
+    hasher.update(value.as_bytes());
     format!("sha256:{:x}", hasher.finalize())
+}
+
+fn hashed_entity_key(value: &str) -> String {
+    let value = value.trim();
+    if value.starts_with("sha256:") {
+        truncate(value, 120)
+    } else {
+        stable_hash(value)
+    }
 }
 
 fn truncate(value: &str, max_len: usize) -> String {

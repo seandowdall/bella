@@ -556,6 +556,8 @@ pub fn sanitize_webhook_payload(payload: &Value) -> Value {
                             Value::String(stable_hash(distinct_id)),
                         );
                     }
+                } else if is_url_like_property_key(key) {
+                    sanitized.insert(key.clone(), sanitize_url_like_value(value));
                 } else if is_sensitive_property_key(key) {
                     sanitized.insert(key.clone(), Value::String("[redacted]".to_string()));
                 } else {
@@ -675,15 +677,27 @@ fn normalize_signal(payload: &Value) -> NormalizedPosthogSignal {
     .map(|value| truncate(value, 120));
     let entity_key = first_string(
         payload,
-        &[
-            &["properties", "service"],
-            &["properties", "component"],
-            &["properties", "$current_url"],
-            &["distinct_id_hash"],
-        ],
+        &[&["properties", "service"], &["properties", "component"]],
     )
     .map(|value| truncate(value, 120))
     .filter(|value| !value.is_empty())
+    .or_else(|| {
+        first_string(
+            payload,
+            &[
+                &["properties", "$current_url"],
+                &["properties", "$pathname"],
+                &["properties", "current_url"],
+                &["properties", "url"],
+                &["properties", "path"],
+                &["properties", "pathname"],
+                &["properties", "referrer"],
+                &["properties", "$referrer"],
+            ],
+        )
+        .map(hashed_entity_key)
+    })
+    .or_else(|| string_at(payload, &["distinct_id_hash"]).map(|value| truncate(value, 120)))
     .unwrap_or_else(|| fingerprint_seed.clone());
     let project_id = string_at(payload, &["posthog_project_id"]).unwrap_or("unknown_project");
     let window_start = detected_at
@@ -726,7 +740,9 @@ fn sanitize_properties(value: &Value) -> Value {
             object
                 .iter()
                 .map(|(key, value)| {
-                    if is_sensitive_property_key(key) {
+                    if is_url_like_property_key(key) {
+                        (key.clone(), sanitize_url_like_value(value))
+                    } else if is_sensitive_property_key(key) {
                         (key.clone(), Value::String("[redacted]".to_string()))
                     } else {
                         (key.clone(), sanitize_properties(value))
@@ -748,6 +764,35 @@ fn is_sensitive_property_key(key: &str) -> bool {
     ]
     .iter()
     .any(|needle| key.contains(needle))
+}
+
+fn is_url_like_property_key(key: &str) -> bool {
+    let key = key.to_lowercase();
+    key.contains("url")
+        || key.contains("href")
+        || key.contains("referer")
+        || key.contains("referrer")
+        || key == "path"
+        || key == "$pathname"
+        || key.ends_with("_path")
+        || key.contains("pathname")
+}
+
+fn sanitize_url_like_value(value: &Value) -> Value {
+    match value {
+        Value::String(value) => Value::String(stable_hash(value)),
+        Value::Array(values) => Value::Array(values.iter().map(sanitize_url_like_value).collect()),
+        _ => Value::String("[redacted]".to_string()),
+    }
+}
+
+fn hashed_entity_key(value: &str) -> String {
+    let value = value.trim();
+    if value.starts_with("sha256:") {
+        truncate(value, 120)
+    } else {
+        stable_hash(value)
+    }
 }
 
 fn first_string<'a>(payload: &'a Value, paths: &[&[&str]]) -> Option<&'a str> {
@@ -843,6 +888,7 @@ mod tests {
             "person@example.com",
             {
                 "$exception_type": "TypeError",
+                "$current_url": "https://app.example.com/orders?token=secret",
                 "service": "checkout",
                 "user_email": "person@example.com",
                 "nested": {
@@ -864,6 +910,10 @@ mod tests {
             Some("[redacted]")
         );
         assert_eq!(
+            string_at(&payload, &["properties", "$current_url"]),
+            Some(stable_hash("https://app.example.com/orders?token=secret").as_str())
+        );
+        assert_eq!(
             string_at(&payload, &["properties", "nested", "session_id"]),
             Some("[redacted]")
         );
@@ -882,6 +932,8 @@ mod tests {
             "properties": {
                 "$exception_type": "TypeError",
                 "$exception_message": "Cannot read properties of undefined",
+                "$current_url": "https://app.example.com/orders?token=secret",
+                "$referrer": "https://search.example.com/?q=private",
                 "email": "person@example.com",
                 "session_id": "abc123",
                 "service": "checkout"
@@ -901,6 +953,14 @@ mod tests {
         assert_eq!(
             string_at(&sanitized, &["properties", "email"]),
             Some("[redacted]")
+        );
+        assert_eq!(
+            string_at(&sanitized, &["properties", "$current_url"]),
+            Some(stable_hash("https://app.example.com/orders?token=secret").as_str())
+        );
+        assert_eq!(
+            string_at(&sanitized, &["properties", "$referrer"]),
+            Some(stable_hash("https://search.example.com/?q=private").as_str())
         );
         assert_eq!(
             string_at(&sanitized, &["properties", "session_id"]),
@@ -972,6 +1032,27 @@ mod tests {
         assert_eq!(normalized.owner_hint.as_deref(), Some("growth-eng"));
         assert_eq!(normalized.fingerprint, same_candidate.fingerprint);
         assert_ne!(normalized.fingerprint, next_window.fingerprint);
+    }
+
+    #[test]
+    fn normalizes_url_only_entity_keys_as_hashes() {
+        let payload = json!({
+            "uuid": "evt_1",
+            "event": "$exception",
+            "timestamp": "2026-06-26T10:15:00Z",
+            "posthog_project_id": "12345",
+            "properties": {
+                "$exception_type": "TypeError",
+                "$current_url": "https://app.example.com/orders?token=secret"
+            }
+        });
+
+        let normalized = normalize_signal(&payload);
+
+        assert_eq!(
+            normalized.entity_key,
+            stable_hash("https://app.example.com/orders?token=secret")
+        );
     }
 
     #[test]
