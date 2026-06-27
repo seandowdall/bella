@@ -12,7 +12,7 @@ crates/cli       Local command-line client
 crates/ingestion Provider usage and cost ingestion
 crates/mcp       MCP server
 crates/sandbox   Local provider sandbox
-crates/worker    Scheduled provider ingestion worker
+crates/worker    Scheduled ingestion and incident delivery worker
 apps/web         Next.js dashboard for app.bellalabs.ai
 apps/site        Next.js landing page for bellalabs.ai
 apps/docs        Contributor and self-hosting documentation
@@ -94,7 +94,8 @@ just api
 just web
 ```
 
-Run the background worker to import provider usage and cost data on a schedule:
+Run the background worker to import provider usage, sync configured PostHog
+signals, and deliver incident notifications on a schedule:
 
 ```sh
 just worker
@@ -116,6 +117,7 @@ Full setup guides:
 - [Self-hosted OAuth setup](apps/docs/self-hosting/github-oauth.md)
 - [Self-hosted Slack incident delivery](apps/docs/self-hosting/slack.md)
 - [OpenAI ingestion](apps/docs/ingestion/openai.md)
+- [PostHog live incident dogfood](apps/docs/ingestion/posthog-dogfood.md)
 
 ## SDKs
 

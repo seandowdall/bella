@@ -1,12 +1,13 @@
 use axum::{
     Json,
-    extract::{Request, State},
+    extract::{ConnectInfo, Request, State},
     http::{HeaderMap, Method, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use std::{
     collections::{HashMap, VecDeque},
+    net::SocketAddr,
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -76,10 +77,18 @@ fn enforce_csrf(state: &AppState, request: &Request) -> Option<Response> {
 
 fn enforce_rate_limit(state: &AppState, request: &Request) -> Option<Response> {
     let policy = rate_limit_policy(request.method(), request.uri().path())?;
+    let peer_addr = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| addr.ip().to_string());
     let key = format!(
         "{}:{}",
         policy.name,
-        client_key(request.headers()).unwrap_or("unknown")
+        client_key(
+            request.headers(),
+            peer_addr.as_deref(),
+            state.config.trust_proxy_headers
+        )
     );
     if state.rate_limiter.check(key, policy.limit, policy.window) {
         None
@@ -264,17 +273,26 @@ fn rate_limit_policy(method: &Method, path: &str) -> Option<RateLimitPolicy> {
     None
 }
 
-fn client_key(headers: &HeaderMap) -> Option<&str> {
-    ["fly-client-ip", "x-real-ip", "x-forwarded-for"]
-        .into_iter()
-        .find_map(|name| {
-            headers
-                .get(name)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.split(',').next())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
+fn client_key<'a>(
+    headers: &'a HeaderMap,
+    peer_addr: Option<&'a str>,
+    trust_proxy_headers: bool,
+) -> &'a str {
+    if trust_proxy_headers
+        && let Some(forwarded) = ["fly-client-ip", "x-real-ip", "x-forwarded-for"]
+            .into_iter()
+            .find_map(|name| {
+                headers
+                    .get(name)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.split(',').next())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+    {
+        return forwarded;
+    }
+    peer_addr.unwrap_or("unknown")
 }
 
 fn error_response(status: StatusCode, message: &'static str) -> Response {
@@ -283,7 +301,7 @@ fn error_response(status: StatusCode, message: &'static str) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{has_session_cookie, parse_origin, rate_limit_policy};
+    use super::{client_key, has_session_cookie, parse_origin, rate_limit_policy};
     use axum::http::{HeaderMap, Method, header};
 
     #[test]
@@ -325,5 +343,20 @@ mod tests {
         );
         assert!(rate_limit_policy(&Method::POST, "/v1/invitations/accept").is_some());
         assert!(rate_limit_policy(&Method::GET, "/v1/providers").is_none());
+    }
+
+    #[test]
+    fn ignores_forwarded_client_headers_unless_trusted() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.10".parse().unwrap());
+
+        assert_eq!(
+            client_key(&headers, Some("198.51.100.3"), false),
+            "198.51.100.3"
+        );
+        assert_eq!(
+            client_key(&headers, Some("198.51.100.3"), true),
+            "203.0.113.10"
+        );
     }
 }

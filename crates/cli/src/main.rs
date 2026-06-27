@@ -137,7 +137,7 @@ enum IntegrationCommand {
 
 #[derive(Debug, Subcommand)]
 enum PosthogCommand {
-    /// Generate or rotate the PostHog webhook secret.
+    /// Configure PostHog webhook and optional read-only API ingestion.
     Connect {
         #[arg(long)]
         organization: Option<String>,
@@ -145,10 +145,41 @@ enum PosthogCommand {
         name: String,
         #[arg(
             long,
+            env = "POSTHOG_HOST",
+            help = "PostHog app origin, e.g. https://us.posthog.com"
+        )]
+        host: Option<String>,
+        #[arg(
+            long,
+            env = "POSTHOG_PROJECT_ID",
+            help = "PostHog project ID for read-only ingestion"
+        )]
+        project_id: Option<String>,
+        #[arg(
+            long,
+            env = "POSTHOG_API_TOKEN",
+            hide_env_values = true,
+            help = "PostHog personal API key with query:read; prefer POSTHOG_API_TOKEN or --api-token-stdin"
+        )]
+        api_token: Option<String>,
+        #[arg(long, help = "Read the PostHog API token from standard input")]
+        api_token_stdin: bool,
+        #[arg(
+            long,
             env = "BELLA_PUBLIC_API_URL",
             help = "Public Bella API origin used to print the PostHog webhook URL"
         )]
         public_api_url: Option<String>,
+    },
+    /// Verify the configured read-only PostHog API connection.
+    Check {
+        #[arg(long)]
+        organization: Option<String>,
+    },
+    /// Pull recent PostHog production signals into incident candidates.
+    Sync {
+        #[arg(long)]
+        organization: Option<String>,
     },
 }
 
@@ -226,7 +257,9 @@ struct Integration {
     integration_type: String,
     display_name: String,
     status: String,
+    metadata: serde_json::Value,
     credential_fingerprint: Option<String>,
+    api_token_fingerprint: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -243,6 +276,26 @@ struct PosthogConnectionOutput {
     webhook_url: String,
     webhook_secret: String,
     auth_header: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PosthogConnectionCheck {
+    ok: bool,
+    integration_id: String,
+    posthog_host: String,
+    posthog_project_id: String,
+    observed_rows: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PosthogSyncOutcome {
+    sync_run_id: String,
+    integration_id: String,
+    window_start: String,
+    window_end: String,
+    signals_seen: usize,
+    signals_upserted: usize,
+    incident_candidates_created: usize,
 }
 
 #[derive(Serialize)]
@@ -287,6 +340,12 @@ struct ConnectProviderRequest<'a> {
 #[derive(Serialize)]
 struct ConnectPosthogRequest<'a> {
     display_name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    posthog_host: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    posthog_project_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_token: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -530,6 +589,10 @@ async fn main() -> anyhow::Result<()> {
                     PosthogCommand::Connect {
                         organization,
                         name,
+                        host,
+                        project_id,
+                        api_token,
+                        api_token_stdin,
                         public_api_url,
                     },
             } => {
@@ -537,9 +600,17 @@ async fn main() -> anyhow::Result<()> {
                 let organization =
                     resolve_organization_id(&cli.api_base_url, &credentials.token, organization)
                         .await?;
-                let connection =
-                    connect_posthog(&cli.api_base_url, &credentials.token, &organization, &name)
-                        .await?;
+                let api_token = read_optional_secret(api_token, api_token_stdin)?;
+                let connection = connect_posthog(
+                    &cli.api_base_url,
+                    &credentials.token,
+                    &organization,
+                    &name,
+                    host.as_deref(),
+                    project_id.as_deref(),
+                    api_token.as_deref(),
+                )
+                .await?;
                 let webhook_url = format_posthog_webhook_url(
                     public_api_url.as_deref().unwrap_or(&cli.api_base_url),
                     &organization,
@@ -557,6 +628,41 @@ async fn main() -> anyhow::Result<()> {
                         output.webhook_url,
                         output.auth_header,
                         output.webhook_secret
+                    )
+                })?;
+            }
+            IntegrationCommand::Posthog {
+                command: PosthogCommand::Check { organization },
+            } => {
+                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let organization =
+                    resolve_organization_id(&cli.api_base_url, &credentials.token, organization)
+                        .await?;
+                let check =
+                    check_posthog(&cli.api_base_url, &credentials.token, &organization).await?;
+                print_value(&check, cli.json, || {
+                    format!(
+                        "PostHog connection OK for project {} at {} (observed {} recent rows).",
+                        check.posthog_project_id, check.posthog_host, check.observed_rows
+                    )
+                })?;
+            }
+            IntegrationCommand::Posthog {
+                command: PosthogCommand::Sync { organization },
+            } => {
+                let credentials = require_credentials(&credentials_path, &cli.api_base_url)?;
+                let organization =
+                    resolve_organization_id(&cli.api_base_url, &credentials.token, organization)
+                        .await?;
+                let sync =
+                    sync_posthog(&cli.api_base_url, &credentials.token, &organization).await?;
+                print_value(&sync, cli.json, || {
+                    format!(
+                        "PostHog sync {} completed: {} seen, {} upserted, {} new incident candidates.",
+                        sync.sync_run_id,
+                        sync.signals_seen,
+                        sync.signals_upserted,
+                        sync.incident_candidates_created
                     )
                 })?;
             }
@@ -897,6 +1003,9 @@ async fn connect_posthog(
     token: &str,
     organization_id: &str,
     display_name: &str,
+    posthog_host: Option<&str>,
+    posthog_project_id: Option<&str>,
+    api_token: Option<&str>,
 ) -> anyhow::Result<PosthogConnection> {
     Client::new()
         .post(format!(
@@ -904,7 +1013,12 @@ async fn connect_posthog(
             api_base_url.trim_end_matches('/')
         ))
         .bearer_auth(token)
-        .json(&ConnectPosthogRequest { display_name })
+        .json(&ConnectPosthogRequest {
+            display_name,
+            posthog_host,
+            posthog_project_id,
+            api_token,
+        })
         .send()
         .await
         .context("failed to contact Bella API")?
@@ -913,6 +1027,48 @@ async fn connect_posthog(
         .json()
         .await
         .context("Bella API returned an invalid PostHog integration response")
+}
+
+async fn check_posthog(
+    api_base_url: &str,
+    token: &str,
+    organization_id: &str,
+) -> anyhow::Result<PosthogConnectionCheck> {
+    Client::new()
+        .post(format!(
+            "{}/v1/organizations/{organization_id}/integrations/posthog/check",
+            api_base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("failed to contact Bella API")?
+        .error_for_status()
+        .context("Bella API rejected the PostHog connection check")?
+        .json()
+        .await
+        .context("Bella API returned an invalid PostHog check response")
+}
+
+async fn sync_posthog(
+    api_base_url: &str,
+    token: &str,
+    organization_id: &str,
+) -> anyhow::Result<PosthogSyncOutcome> {
+    Client::new()
+        .post(format!(
+            "{}/v1/organizations/{organization_id}/integrations/posthog/sync",
+            api_base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("failed to contact Bella API")?
+        .error_for_status()
+        .context("Bella API rejected the PostHog sync request")?
+        .json()
+        .await
+        .context("Bella API returned an invalid PostHog sync response")
 }
 
 fn format_posthog_webhook_url(public_api_url: &str, organization_id: &str) -> String {
@@ -942,6 +1098,29 @@ fn read_provider_secret(secret: Option<String>, secret_stdin: bool) -> anyhow::R
         bail!("provider credential must not be empty");
     }
     Ok(secret)
+}
+
+fn read_optional_secret(
+    secret: Option<String>,
+    secret_stdin: bool,
+) -> anyhow::Result<Option<String>> {
+    if secret.is_some() && secret_stdin {
+        bail!("use either --api-token/POSTHOG_API_TOKEN or --api-token-stdin, not both");
+    }
+    if secret_stdin {
+        let mut value = String::new();
+        io::stdin()
+            .read_to_string(&mut value)
+            .context("failed to read secret from stdin")?;
+        let value = value.trim().to_owned();
+        if value.is_empty() {
+            bail!("stdin did not contain a secret");
+        }
+        return Ok(Some(value));
+    }
+    Ok(secret
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty()))
 }
 
 fn credentials_path() -> anyhow::Result<PathBuf> {

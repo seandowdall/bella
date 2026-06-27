@@ -358,6 +358,7 @@ name = "bella-worker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "bella-db",
  "bella-ingestion",
  "bella-slack",

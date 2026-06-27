@@ -4,6 +4,10 @@ use axum::{
     http::{HeaderMap, StatusCode, header::AUTHORIZATION},
     response::{IntoResponse, Response},
 };
+use axum_extra::extract::cookie::CookieJar;
+use bella_ingestion::posthog::{
+    PosthogConnectionCheck, PosthogIngestor, PosthogSyncOutcome, sanitize_webhook_payload,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,7 +15,10 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    auth::{AuthError, authenticated_user},
+};
 
 const MAX_SLACK_INCIDENT_DELIVERIES_PER_WINDOW: i64 = 20;
 
@@ -35,6 +42,8 @@ struct NormalizedPosthogSignal {
     title: String,
     severity: String,
     detected_at: DateTime<Utc>,
+    external_url: Option<String>,
+    entity_key: String,
 }
 
 pub async fn webhook(
@@ -44,9 +53,16 @@ pub async fn webhook(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<(StatusCode, Json<PosthogWebhookResponse>), PosthogWebhookError> {
+    if !state.config.posthog_ingestion_enabled {
+        return Err(PosthogWebhookError::Disabled);
+    }
+    if query.secret.is_some() {
+        return Err(PosthogWebhookError::QuerySecretUnsupported);
+    }
     verify_secret(&state, organization_id, &headers, query.secret.as_deref()).await?;
     ensure_organization(&state, organization_id).await?;
 
+    let payload = sanitize_webhook_payload(&payload);
     let normalized = normalize_signal(&payload);
     let mut transaction = state.db.begin().await?;
 
@@ -54,7 +70,7 @@ pub async fn webhook(
     let incident = sqlx::query(
         "insert into incidents
          (id, organization_id, title, status, severity, source, fingerprint, detected_at, metadata)
-         values ($1, $2, $3, 'triaging', $4, 'posthog', $5, $6, $7)
+         values ($1, $2, $3, 'triggered', $4, 'posthog', $5, $6, $7)
          on conflict (organization_id, source, fingerprint) where resolved_at is null
          do update set title = excluded.title,
                        severity = excluded.severity,
@@ -71,6 +87,8 @@ pub async fn webhook(
     .bind(serde_json::json!({
         "first_source": "posthog",
         "last_signal_type": normalized.signal_type,
+        "entity_key": normalized.entity_key,
+        "external_url": normalized.external_url,
     }))
     .fetch_one(&mut *transaction)
     .await?;
@@ -118,6 +136,7 @@ pub async fn webhook(
             "signal_id": signal_id,
             "signal_type": normalized.signal_type,
             "source_event_id": normalized.source_event_id,
+            "external_url": normalized.external_url,
         }))
         .execute(&mut *transaction)
         .await?;
@@ -157,6 +176,48 @@ pub async fn webhook(
     ))
 }
 
+pub async fn check_connection(
+    State(state): State<AppState>,
+    Path(organization_id): Path<Uuid>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<PosthogConnectionCheck>, PosthogSyncError> {
+    let user = authenticated_user(&state, &jar, &headers).await?;
+    require_membership(&state, user.id, organization_id, true).await?;
+    posthog_ingestor(&state)
+        .check_organization(organization_id)
+        .await
+        .map(Json)
+        .map_err(PosthogSyncError::from)
+}
+
+pub async fn sync_now(
+    State(state): State<AppState>,
+    Path(organization_id): Path<Uuid>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<PosthogSyncOutcome>, PosthogSyncError> {
+    if !state.config.posthog_ingestion_enabled {
+        return Err(PosthogSyncError::Disabled);
+    }
+    let user = authenticated_user(&state, &jar, &headers).await?;
+    require_membership(&state, user.id, organization_id, true).await?;
+    posthog_ingestor(&state)
+        .sync_organization(organization_id)
+        .await
+        .map(Json)
+        .map_err(PosthogSyncError::from)
+}
+
+fn posthog_ingestor(state: &AppState) -> PosthogIngestor {
+    PosthogIngestor::new(
+        state.db.clone(),
+        state.provider_client.clone(),
+        state.credential_cipher.clone(),
+        state.config.posthog_ingestion_enabled,
+    )
+}
+
 async fn can_enqueue_slack_incident_delivery(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     organization_id: Uuid,
@@ -194,7 +255,8 @@ async fn verify_secret(
         return Err(PosthogWebhookError::Unauthorized);
     };
 
-    if let Some(expected) = state.config.posthog_webhook_secret.as_deref()
+    if state.config.allow_global_posthog_webhook_secret
+        && let Some(expected) = state.config.posthog_webhook_secret.as_deref()
         && constant_time_eq(provided.as_bytes(), expected.as_bytes())
     {
         return Ok(());
@@ -212,7 +274,7 @@ async fn verify_secret(
     .bind(organization_id)
     .fetch_all(&state.db)
     .await?;
-    if rows.is_empty() && state.config.posthog_webhook_secret.is_none() {
+    if rows.is_empty() {
         return Err(PosthogWebhookError::NotConfigured);
     }
     for row in rows {
@@ -263,6 +325,28 @@ async fn ensure_organization(
     Ok(())
 }
 
+async fn require_membership(
+    state: &AppState,
+    user_id: Uuid,
+    organization_id: Uuid,
+    require_admin: bool,
+) -> Result<(), PosthogSyncError> {
+    let role = sqlx::query(
+        "select role from organization_memberships
+         where organization_id = $1 and user_id = $2",
+    )
+    .bind(organization_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?
+    .map(|row| row.get::<String, _>("role"))
+    .ok_or(PosthogSyncError::NotFound)?;
+    if require_admin && !matches!(role.as_str(), "owner" | "admin") {
+        return Err(PosthogSyncError::Forbidden);
+    }
+    Ok(())
+}
+
 fn normalize_signal(payload: &Value) -> NormalizedPosthogSignal {
     let event_name = string_at(payload, &["event"]).unwrap_or("posthog_event");
     let signal_type = if event_name == "$exception" {
@@ -294,6 +378,8 @@ fn normalize_signal(payload: &Value) -> NormalizedPosthogSignal {
         &[
             &["properties", "$exception_fingerprint"],
             &["properties", "$exception_type"],
+            &["properties", "service"],
+            &["properties", "component"],
             &["issue", "id"],
             &["issue", "fingerprint"],
         ],
@@ -334,6 +420,33 @@ fn normalize_signal(payload: &Value) -> NormalizedPosthogSignal {
     .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
     .map(|value| value.with_timezone(&Utc))
     .unwrap_or_else(Utc::now);
+    let external_url = first_string(payload, &[&["external_url"], &["url"], &["issue", "url"]])
+        .filter(|value| !value.starts_with("sha256:"))
+        .map(|value| truncate(value, 500));
+    let entity_key = first_string(
+        payload,
+        &[&["properties", "service"], &["properties", "component"]],
+    )
+    .map(|value| truncate(value, 120))
+    .filter(|value| !value.is_empty())
+    .or_else(|| {
+        first_string(
+            payload,
+            &[
+                &["properties", "$current_url"],
+                &["properties", "$pathname"],
+                &["properties", "current_url"],
+                &["properties", "url"],
+                &["properties", "path"],
+                &["properties", "pathname"],
+                &["properties", "referrer"],
+                &["properties", "$referrer"],
+            ],
+        )
+        .map(hashed_entity_key)
+    })
+    .or_else(|| string_at(payload, &["distinct_id_hash"]).map(|value| truncate(value, 120)))
+    .unwrap_or_else(|| fingerprint.clone());
 
     NormalizedPosthogSignal {
         signal_type,
@@ -342,6 +455,8 @@ fn normalize_signal(payload: &Value) -> NormalizedPosthogSignal {
         title,
         severity,
         detected_at,
+        external_url,
+        entity_key,
     }
 }
 
@@ -361,9 +476,22 @@ fn string_at<'a>(payload: &'a Value, path: &[&str]) -> Option<&'a str> {
 }
 
 fn payload_hash(payload: &Value) -> String {
+    stable_hash(&payload.to_string())
+}
+
+fn stable_hash(value: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(payload.to_string().as_bytes());
+    hasher.update(value.as_bytes());
     format!("sha256:{:x}", hasher.finalize())
+}
+
+fn hashed_entity_key(value: &str) -> String {
+    let value = value.trim();
+    if value.starts_with("sha256:") {
+        truncate(value, 120)
+    } else {
+        stable_hash(value)
+    }
 }
 
 fn truncate(value: &str, max_len: usize) -> String {
@@ -386,8 +514,10 @@ fn normalize_severity(value: &str) -> String {
 pub enum PosthogWebhookError {
     Credential,
     Database(sqlx::Error),
+    Disabled,
     NotConfigured,
     NotFound,
+    QuerySecretUnsupported,
     Unauthorized,
 }
 
@@ -399,12 +529,22 @@ impl IntoResponse for PosthogWebhookError {
                 tracing::error!(error = %error, "PostHog webhook ingestion failed");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
             }
+            Self::Disabled => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "PostHog production ingestion is disabled",
+            )
+                .into_response(),
             Self::NotConfigured => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "PostHog webhook ingestion is not configured",
             )
                 .into_response(),
             Self::NotFound => StatusCode::NOT_FOUND.into_response(),
+            Self::QuerySecretUnsupported => (
+                StatusCode::BAD_REQUEST,
+                "PostHog webhook secrets must be sent in a header or bearer token",
+            )
+                .into_response(),
             Self::Unauthorized => StatusCode::UNAUTHORIZED.into_response(),
         }
     }
@@ -413,5 +553,58 @@ impl IntoResponse for PosthogWebhookError {
 impl From<sqlx::Error> for PosthogWebhookError {
     fn from(error: sqlx::Error) -> Self {
         Self::Database(error)
+    }
+}
+
+#[derive(Debug)]
+pub enum PosthogSyncError {
+    Auth(AuthError),
+    Database(sqlx::Error),
+    Disabled,
+    Forbidden,
+    NotFound,
+    Upstream,
+}
+
+impl IntoResponse for PosthogSyncError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Auth(error) => error.into_response(),
+            Self::Database(error) => {
+                tracing::error!(error = %error, "PostHog sync request failed");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+            Self::Disabled => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "PostHog production ingestion is disabled",
+            )
+                .into_response(),
+            Self::Forbidden => StatusCode::FORBIDDEN.into_response(),
+            Self::NotFound => StatusCode::NOT_FOUND.into_response(),
+            Self::Upstream => (
+                StatusCode::BAD_GATEWAY,
+                "PostHog request failed; check sync run status and server logs",
+            )
+                .into_response(),
+        }
+    }
+}
+
+impl From<AuthError> for PosthogSyncError {
+    fn from(error: AuthError) -> Self {
+        Self::Auth(error)
+    }
+}
+
+impl From<sqlx::Error> for PosthogSyncError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Database(error)
+    }
+}
+
+impl From<anyhow::Error> for PosthogSyncError {
+    fn from(error: anyhow::Error) -> Self {
+        tracing::warn!(%error, "PostHog upstream request failed");
+        Self::Upstream
     }
 }

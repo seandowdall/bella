@@ -12,3 +12,8 @@
 
 - [Configure GitHub OAuth](self-hosting/github-oauth.md)
 - [Configure Slack incident delivery](self-hosting/slack.md)
+
+## Ingestion
+
+- [OpenAI ingestion](ingestion/openai.md)
+- [PostHog live incident dogfood](ingestion/posthog-dogfood.md)

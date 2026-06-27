@@ -49,9 +49,12 @@ struct Config {
     openai_base_url: String,
     slack: Option<SlackConfig>,
     posthog_webhook_secret: Option<String>,
+    allow_global_posthog_webhook_secret: bool,
+    posthog_ingestion_enabled: bool,
     resend_api_key: Option<String>,
     email_from: Option<String>,
     allowed_origins: Vec<String>,
+    trust_proxy_headers: bool,
 }
 
 impl Config {
@@ -69,6 +72,16 @@ impl Config {
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
+        let allow_global_posthog_webhook_secret = parse_bool_env(
+            "BELLA_ALLOW_GLOBAL_POSTHOG_WEBHOOK_SECRET",
+            cfg!(debug_assertions),
+        )?;
+        if posthog_webhook_secret.is_some() && !allow_global_posthog_webhook_secret {
+            anyhow::bail!(
+                "POSTHOG_WEBHOOK_SECRET is disabled by default; use per-integration secrets or set BELLA_ALLOW_GLOBAL_POSTHOG_WEBHOOK_SECRET=true"
+            );
+        }
+        let posthog_ingestion_enabled = parse_bool_env("BELLA_POSTHOG_INGESTION_ENABLED", true)?;
         let resend_api_key = env::var("RESEND_API_KEY")
             .ok()
             .map(|value| value.trim().to_string())
@@ -101,6 +114,7 @@ impl Config {
 
         let slack = SlackConfig::from_env()?;
         let allowed_origins = parse_origin_allowlist(&web_url)?;
+        let trust_proxy_headers = parse_bool_env("BELLA_TRUST_PROXY_HEADERS", false)?;
 
         Ok(Self {
             github_client_id,
@@ -112,10 +126,23 @@ impl Config {
             openai_base_url,
             slack,
             posthog_webhook_secret,
+            allow_global_posthog_webhook_secret,
+            posthog_ingestion_enabled,
             resend_api_key,
             email_from,
             allowed_origins,
+            trust_proxy_headers,
         })
+    }
+}
+
+fn parse_bool_env(name: &str, default: bool) -> anyhow::Result<bool> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse::<bool>()
+            .map_err(|_| anyhow::anyhow!("{name} must be either true or false")),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -275,12 +302,20 @@ async fn main() -> anyhow::Result<()> {
             post(posthog_ingestion::webhook),
         )
         .route(
+            "/v1/organizations/:organization_id/integrations/posthog/check",
+            post(posthog_ingestion::check_connection),
+        )
+        .route(
+            "/v1/organizations/:organization_id/integrations/posthog/sync",
+            post(posthog_ingestion::sync_now),
+        )
+        .route(
             "/v1/organizations/:organization_id/incidents",
             get(incidents::list),
         )
         .route(
             "/v1/organizations/:organization_id/incidents/:incident_id",
-            get(incidents::get),
+            get(incidents::get).patch(incidents::update),
         )
         .route(
             "/v1/organizations/:organization_id/integrations",
@@ -341,9 +376,12 @@ async fn main() -> anyhow::Result<()> {
     let listener = TcpListener::bind(bind_addr).await?;
     tracing::info!("bella-api listening on http://{bind_addr}");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }

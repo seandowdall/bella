@@ -5,8 +5,11 @@ import type {
   AgentMessageResponse,
   IncidentDetail,
   IncidentListItem,
+  IncidentStatus,
   Integration,
+  PosthogConnectionCheck,
   PosthogConnection,
+  PosthogSyncOutcome,
   ProviderAccount,
   ProviderDefinition,
   OrganizationMember,
@@ -344,6 +347,30 @@ export async function getIncident({
   return response.json() as Promise<IncidentDetail>;
 }
 
+export async function updateIncidentStatus({
+  organizationId,
+  incidentId,
+  status,
+}: {
+  organizationId: string;
+  incidentId: string;
+  status: IncidentStatus;
+}): Promise<IncidentDetail> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/incidents/${incidentId}`,
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not update incident status."));
+  }
+  return response.json() as Promise<IncidentDetail>;
+}
+
 export async function getIntegrations(organizationId: string): Promise<Integration[]> {
   const response = await apiFetch(`${apiBaseUrl}/v1/organizations/${organizationId}/integrations`, {
     credentials: "include",
@@ -357,9 +384,15 @@ export async function getIntegrations(organizationId: string): Promise<Integrati
 export async function connectPosthogIntegration({
   organizationId,
   displayName,
+  posthogHost,
+  posthogProjectId,
+  apiToken,
 }: {
   organizationId: string;
   displayName?: string;
+  posthogHost?: string;
+  posthogProjectId?: string;
+  apiToken?: string;
 }): Promise<PosthogConnection> {
   const response = await apiFetch(
     `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/posthog`,
@@ -367,13 +400,50 @@ export async function connectPosthogIntegration({
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ display_name: displayName ?? "PostHog" }),
+      body: JSON.stringify({
+        display_name: displayName ?? "PostHog",
+        posthog_host: posthogHost?.trim() || null,
+        posthog_project_id: posthogProjectId?.trim() || null,
+        api_token: apiToken?.trim() || null,
+      }),
     },
   );
   if (!response.ok) {
     throw new Error(await errorMessage(response, "Could not connect PostHog."));
   }
   return response.json() as Promise<PosthogConnection>;
+}
+
+export async function checkPosthogIntegration(
+  organizationId: string,
+): Promise<PosthogConnectionCheck> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/posthog/check`,
+    {
+      method: "POST",
+      credentials: "include",
+      timeoutMs: 15_000,
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not verify PostHog API access."));
+  }
+  return response.json() as Promise<PosthogConnectionCheck>;
+}
+
+export async function syncPosthogIntegration(organizationId: string): Promise<PosthogSyncOutcome> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/posthog/sync`,
+    {
+      method: "POST",
+      credentials: "include",
+      timeoutMs: 30_000,
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not sync PostHog signals."));
+  }
+  return response.json() as Promise<PosthogSyncOutcome>;
 }
 
 export async function sendAgentMessage({

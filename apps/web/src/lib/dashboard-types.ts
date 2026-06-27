@@ -145,6 +145,10 @@ export type SlackTestMessage = {
 };
 
 export type IncidentStatus =
+  | "triggered"
+  | "acknowledged"
+  | "mitigated"
+  | "follow_up"
   | "triaging"
   | "investigating"
   | "identified"
@@ -209,7 +213,9 @@ export type Integration = {
   integration_type: string;
   display_name: string;
   status: "connected" | "needs_attention" | "disabled";
+  metadata: Record<string, unknown>;
   credential_fingerprint: string | null;
+  api_token_fingerprint: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -217,4 +223,22 @@ export type Integration = {
 export type PosthogConnection = {
   integration: Integration;
   webhook_secret: string;
+};
+
+export type PosthogConnectionCheck = {
+  ok: boolean;
+  integration_id: string;
+  posthog_host: string;
+  posthog_project_id: string;
+  observed_rows: number;
+};
+
+export type PosthogSyncOutcome = {
+  sync_run_id: string;
+  integration_id: string;
+  window_start: string;
+  window_end: string;
+  signals_seen: number;
+  signals_upserted: number;
+  incident_candidates_created: number;
 };
