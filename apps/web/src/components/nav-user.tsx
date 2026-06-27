@@ -1,4 +1,5 @@
 import { EllipsisVerticalIcon, LogOutIcon } from "lucide-react";
+import { ModeToggle } from "@/components/mode-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -48,6 +49,8 @@ export function NavUser({ user, onLogout }: { user: User; onLogout: () => void }
             sideOffset={4}
           >
             <DropdownMenuLabel>{displayName}</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <ModeToggle />
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onLogout}>
               <LogOutIcon />
