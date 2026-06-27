@@ -113,6 +113,7 @@ just cli logout
 
 Full setup guides:
 
+- [Bella CLI beta](apps/docs/cli-beta.md)
 - [Contributor OAuth setup](apps/docs/contributors/github-oauth.md)
 - [Self-hosted OAuth setup](apps/docs/self-hosting/github-oauth.md)
 - [Self-hosted Slack incident delivery](apps/docs/self-hosting/slack.md)

@@ -7,6 +7,7 @@
 
 ## Contributors
 
+- [Bella CLI beta](cli-beta.md)
 - [GitHub OAuth for local development](contributors/github-oauth.md)
 
 ## Self-Hosting
