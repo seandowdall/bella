@@ -2,9 +2,21 @@ name: CLI Release
 
 on:
   push:
-    tags:
-      - "bella-cli-v*"
+    branches:
+      - qa
+      - main
+    paths:
+      - "crates/cli/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/cli-release.yml"
+      - "scripts/install-bella-cli.sh"
+      - "apps/docs/cli-beta.md"
   workflow_dispatch:
+
+concurrency:
+  group: cli-release-${{ github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -56,7 +68,7 @@ jobs:
           cp target/release/bella dist/${{ matrix.artifact }}/bella
           cp README.md dist/${{ matrix.artifact }}/README.md
           tar -C dist -czf dist/${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
-          shasum -a 256 dist/${{ matrix.artifact }}.tar.gz > dist/${{ matrix.artifact }}.tar.gz.sha256
+          (cd dist && shasum -a 256 ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.tar.gz.sha256)
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -67,8 +79,8 @@ jobs:
             dist/${{ matrix.artifact }}.tar.gz.sha256
 
   release:
-    name: Publish GitHub release assets
-    if: startsWith(github.ref, 'refs/tags/')
+    name: Publish ${{ github.ref_name }} channel release
+    if: github.ref_name == 'qa' || github.ref_name == 'main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -81,10 +93,30 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Publish GitHub release assets
-        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631
-        with:
-          prerelease: true
-          files: |
-            dist/*.tar.gz
-            dist/*.tar.gz.sha256
+      - name: Resolve channel
+        id: channel
+        run: |
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            echo "tag=bella-cli-prod" >> "$GITHUB_OUTPUT"
+            echo "title=Bella CLI prod beta" >> "$GITHUB_OUTPUT"
+            echo "channel=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=bella-cli-qa" >> "$GITHUB_OUTPUT"
+            echo "title=Bella CLI QA beta" >> "$GITHUB_OUTPUT"
+            echo "channel=qa" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish channel release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.channel.outputs.tag }}
+          TITLE: ${{ steps.channel.outputs.title }}
+          CHANNEL: ${{ steps.channel.outputs.channel }}
+        run: |
+          gh release delete "$TAG" --cleanup-tag --yes || true
+          gh release create "$TAG" dist/*.tar.gz dist/*.tar.gz.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "$TITLE" \
+            --prerelease \
+            --notes "Automated Bella CLI beta build for the $CHANNEL channel from $GITHUB_SHA."
