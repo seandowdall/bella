@@ -67,6 +67,9 @@ Requirements:
   multiple trusted dashboard origins.
 - Set `BELLA_ALLOWED_GITHUB_EMAILS` to a comma-separated list when you want to
   restrict login to specific GitHub accounts by primary verified email.
+- Leave `BELLA_TRUST_PROXY_HEADERS=false` unless Railway or another trusted edge
+  fully controls `X-Forwarded-For` before traffic reaches the API. Set it to
+  `true` only when proxy headers are not user-controlled.
 
 ## Configure the Dashboard
 
@@ -74,10 +77,12 @@ Build the dashboard with:
 
 ```env
 NEXT_PUBLIC_BELLA_API_BASE_URL=/api
+NEXT_PUBLIC_BELLA_PUBLIC_API_URL=https://bella.example.com/api
 ```
 
-This value is public and is embedded in the browser bundle. It is an API path,
-not a secret.
+These values are public and are embedded in the browser bundle. The API base URL
+can be a same-origin path. The public API URL must be the externally reachable
+API origin used for generated webhook URLs, including any `/api` prefix.
 
 Configure the reverse proxy so:
 
@@ -96,6 +101,16 @@ respectively:
 
 Because the dashboard is a single-page application, configure static hosting
 to fall back to `index.html` for unknown dashboard routes.
+
+## Configure the Worker
+
+Self-hosted deployments must run the worker alongside the API. The Docker image
+contains both binaries; set `BELLA_PROCESS=bella-worker` for the worker service
+and leave it unset, or set `BELLA_PROCESS=bella-api`, for the API service.
+
+The worker exposes `GET /health` on `PORT` for platforms such as Railway. Keep
+`BELLA_CREDENTIAL_ENCRYPTION_KEY`, `DATABASE_URL`, and any ingestion or Slack
+integration environment variables in sync between the API and worker.
 
 ## Validate the Installation
 

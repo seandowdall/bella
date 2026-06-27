@@ -62,6 +62,8 @@ BELLA_ALLOWED_POSTHOG_ORIGINS=https://self-hosted-posthog.example.com
 
 The same command also rotates Bella's inbound webhook secret and prints the
 webhook URL/auth header. Store the secret immediately; Bella only shows it once.
+Only organization owners and admins can connect PostHog, check the API
+connection, or run manual syncs.
 
 ## Non-mutating Check
 
@@ -97,11 +99,40 @@ The background worker also syncs configured PostHog integrations automatically:
 just worker
 ```
 
-The default interval is five minutes. Override it with:
+The worker considers due PostHog integrations on each
+`BELLA_WORKER_POLL_SECONDS` loop. The default PostHog sync interval is five
+minutes. Override it with:
 
 ```text
 BELLA_POSTHOG_SYNC_INTERVAL_SECONDS=300
 ```
+
+For container deploys that use the shared Bella image, run the worker with:
+
+```text
+BELLA_PROCESS=bella-worker
+```
+
+The worker serves `GET /health` on `PORT` so platforms such as Railway can
+health-check the worker process separately from the API.
+
+## Incident Lifecycle
+
+PostHog signals create open incident candidates with `triggered` status. From
+the incident detail page or API, responders can move a candidate through:
+
+```text
+acknowledged
+investigating
+mitigated
+resolved
+follow_up
+```
+
+Setting an incident to `resolved` records `resolved_at`; moving it back to any
+non-resolved state clears `resolved_at`. Each status change appends an
+`incident.status_changed` timeline event with the previous status, next status,
+and actor user ID.
 
 ## Kill Switch
 
