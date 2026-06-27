@@ -26,6 +26,9 @@
     "verify:rust": "bun run rust:fmt && bun run rust:check && bun run rust:clippy && bun run rust:test",
     "verify:ts": "bun run format:check && bun run lint && bun run typecheck && bun run test:ts"
   },
+  "dependencies": {
+    "postcss": "^8.5.15"
+  },
   "devDependencies": {
     "husky": "^9.1.7",
     "oxfmt": "^0.56.0",

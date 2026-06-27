@@ -218,7 +218,21 @@ fn rate_limit_policy(method: &Method, path: &str) -> Option<RateLimitPolicy> {
             window: Duration::from_secs(300),
         });
     }
-    if method == Method::POST && path.ends_with("/integrations/posthog") {
+    if method == Method::PATCH && path.ends_with("/integrations/posthog") {
+        return Some(RateLimitPolicy {
+            name: "integration_write",
+            limit: 20,
+            window: Duration::from_secs(300),
+        });
+    }
+    if method == Method::DELETE && path.ends_with("/integrations/posthog") {
+        return Some(RateLimitPolicy {
+            name: "integration_write",
+            limit: 20,
+            window: Duration::from_secs(300),
+        });
+    }
+    if method == Method::POST && path.ends_with("/integrations/posthog/webhook-secret/rotate") {
         return Some(RateLimitPolicy {
             name: "integration_write",
             limit: 20,

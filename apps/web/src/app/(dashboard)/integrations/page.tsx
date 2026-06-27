@@ -1,63 +1,82 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import {
-  CheckIcon,
-  CopyIcon,
-  ExternalLinkIcon,
-  MessageSquareIcon,
-  RotateCcwIcon,
-} from "lucide-react";
+import { ArrowRightIcon, CheckIcon, ClockIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import {
-  connectPosthogIntegration,
-  createSlackInstallUrl,
-  getIntegrations,
-  getSlackStatus,
-} from "@/lib/api";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { IntegrationIcon } from "@/components/integration-icon";
+import { createSlackInstallUrl, getIntegrations, getSlackStatus } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import type { Integration, PosthogConnection, SlackStatus } from "@/lib/dashboard-types";
+import type { Integration, SlackStatus } from "@/lib/dashboard-types";
 
-const publicApiUrl = process.env.NEXT_PUBLIC_BELLA_PUBLIC_API_URL ?? "http://127.0.0.1:3000";
+type IntegrationCatalogItem = {
+  id: string;
+  name: string;
+  description: string;
+  href?: string;
+  capabilities: string[];
+  plannedSummary?: string;
+  state: "available" | "planned";
+};
+
+const catalog: IntegrationCatalogItem[] = [
+  {
+    id: "posthog",
+    name: "PostHog",
+    description: "Create Bella incidents from alerts, exception events, and production signals.",
+    href: "/integrations/posthog",
+    capabilities: ["Webhooks", "API ingestion", "Incident candidates"],
+    state: "available",
+  },
+  {
+    id: "slack",
+    name: "Slack",
+    description: "Send incidents to the Slack channels where your team works.",
+    capabilities: ["Notifications", "Channels"],
+    state: "available",
+  },
+  {
+    id: "sentry",
+    name: "Sentry",
+    description: "Ingest issue regressions, releases, and error spikes from Sentry projects.",
+    capabilities: ["Webhooks", "Errors", "Releases"],
+    plannedSummary:
+      "Planned ingestion for issue regressions, release markers, and error-volume alerts.",
+    state: "planned",
+  },
+  {
+    id: "linear",
+    name: "Linear",
+    description: "Create, link, and sync incident follow-up issues with engineering workflows.",
+    capabilities: ["Issues", "Backlinks", "Status sync"],
+    plannedSummary:
+      "Planned workflow sync for follow-up issues, ownership, and incident backlinks.",
+    state: "planned",
+  },
+];
 
 export default function IntegrationsPage() {
   const { selectedOrganizationId } = useAuth();
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
-  const [connection, setConnection] = useState<PosthogConnection | null>(null);
   const [loading, setLoading] = useState(true);
   const [installingSlack, setInstallingSlack] = useState(false);
-  const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState("");
-
-  const posthog = integrations.find((integration) => integration.integration_type === "posthog");
-  const workspaceConnected = slackStatus?.workspace?.status === "connected";
-  const webhookUrl = useMemo(() => {
-    if (!selectedOrganizationId) return "";
-    return `${publicApiUrl.replace(/\/$/, "")}/v1/organizations/${selectedOrganizationId}/webhooks/posthog`;
-  }, [selectedOrganizationId]);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!selectedOrganizationId) return;
     let cancelled = false;
     const load = async () => {
+      setLoading(true);
       setError("");
       try {
         const [nextIntegrations, nextSlackStatus] = await Promise.all([
@@ -82,25 +101,11 @@ export default function IntegrationsPage() {
     };
   }, [selectedOrganizationId]);
 
-  const connectPosthog = async () => {
-    if (!selectedOrganizationId) return;
-    setConnecting(true);
-    setError("");
-    try {
-      const nextConnection = await connectPosthogIntegration({
-        organizationId: selectedOrganizationId,
-      });
-      setConnection(nextConnection);
-      setIntegrations((current) => [
-        ...current.filter((item) => item.id !== nextConnection.integration.id),
-        nextConnection.integration,
-      ]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not connect PostHog.");
-    } finally {
-      setConnecting(false);
-    }
-  };
+  const integrationsByType = useMemo(
+    () => new Map(integrations.map((integration) => [integration.integration_type, integration])),
+    [integrations],
+  );
+  const workspaceConnected = slackStatus?.workspace?.status === "connected";
 
   const installSlack = async () => {
     if (!selectedOrganizationId) return;
@@ -118,18 +123,18 @@ export default function IntegrationsPage() {
     }
   };
 
-  const copy = async (label: string, value: string) => {
-    await navigator.clipboard.writeText(value);
-    setCopied(label);
-    window.setTimeout(() => setCopied(""), 1600);
+  const copyInvite = async () => {
+    await navigator.clipboard.writeText("/invite @Bella");
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+    <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
-        <p className="text-muted-foreground text-sm">
-          Connect operational systems that can create Bella incidents.
+        <p className="text-sm text-muted-foreground">
+          Connect operational systems that can create Bella incidents and enrich investigations.
         </p>
       </div>
 
@@ -139,60 +144,82 @@ export default function IntegrationsPage() {
         </Alert>
       )}
 
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="bg-muted flex size-10 shrink-0 items-center justify-center rounded-lg">
-                <MessageSquareIcon />
-              </div>
-              <div className="flex min-w-0 flex-col gap-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <CardTitle>Slack</CardTitle>
-                  {!loading && (
-                    <Badge variant={workspaceConnected ? "secondary" : "outline"}>
-                      {workspaceConnected ? "Connected" : "Not connected"}
-                    </Badge>
-                  )}
-                </div>
-                <CardDescription>
-                  Send incidents to the Slack channels where your team works.
-                </CardDescription>
-              </div>
-            </div>
-            {!loading && (
-              <Button
-                type="button"
-                variant={workspaceConnected ? "outline" : "default"}
-                onClick={() => void installSlack()}
-                disabled={!selectedOrganizationId || installingSlack}
-              >
-                {installingSlack ? (
-                  <Spinner data-icon="inline-start" />
-                ) : (
-                  <ExternalLinkIcon data-icon="inline-start" />
-                )}
-                {workspaceConnected ? "Reconnect" : "Install Slack"}
-              </Button>
-            )}
-          </div>
-        </CardHeader>
+      {loading ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {catalog.map((item) => (
+            <Skeleton key={item.id} className="h-56 rounded-xl" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {catalog.map((item) =>
+            item.id === "slack" ? (
+              <SlackCard
+                key={item.id}
+                item={item}
+                connected={workspaceConnected}
+                workspaceName={slackStatus?.workspace?.team_name}
+                installing={installingSlack}
+                copied={copied}
+                onInstall={() => void installSlack()}
+                onCopy={() => void copyInvite()}
+              />
+            ) : (
+              <IntegrationCard
+                key={item.id}
+                item={item}
+                integration={integrationsByType.get(item.id)}
+              />
+            ),
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
-        {loading ? (
-          <CardContent>
-            <Skeleton className="h-20 w-full" />
-          </CardContent>
-        ) : workspaceConnected ? (
-          <CardContent className="flex flex-col gap-4">
+function SlackCard({
+  item,
+  connected,
+  workspaceName,
+  installing,
+  copied,
+  onInstall,
+  onCopy,
+}: {
+  item: IntegrationCatalogItem;
+  connected: boolean;
+  workspaceName: string | undefined;
+  installing: boolean;
+  copied: boolean;
+  onInstall: () => void;
+  onCopy: () => void;
+}) {
+  return (
+    <Card className="flex min-h-56 flex-col">
+      <CardHeader>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <IntegrationIcon integration="slack" name="Slack" />
             <div className="flex flex-col gap-1">
-              <p className="text-sm font-medium">
-                {slackStatus?.workspace?.team_name ?? "Slack workspace"}
-              </p>
-              <p className="text-muted-foreground text-sm">
-                Bella is installed. Reconnect to authorize a different workspace.
+              <CardTitle>{item.name}</CardTitle>
+              <CardDescription>{item.description}</CardDescription>
+            </div>
+          </div>
+          <Badge variant={connected ? "secondary" : "outline"}>
+            {connected ? "Connected" : "Not connected"}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-1 flex-col justify-between gap-5">
+        {connected ? (
+          <div className="flex flex-col gap-4">
+            <div>
+              <p className="text-sm font-medium">{workspaceName ?? "Slack workspace"}</p>
+              <p className="text-sm text-muted-foreground">
+                Bella is installed. Reconnect to use a different workspace.
               </p>
             </div>
-
             <Field>
               <FieldLabel htmlFor="slack-invite-command">Add Bella to a channel</FieldLabel>
               <InputGroup>
@@ -202,164 +229,135 @@ export default function IntegrationsPage() {
                   readOnly
                   className="font-mono"
                 />
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <InputGroupAddon
-                        align="inline-end"
-                        aria-label="Copy Slack invite command"
-                        onClick={() => void copy("slack-invite", "/invite @Bella")}
-                      >
-                        {copied === "slack-invite" ? <CheckIcon /> : <CopyIcon />}
-                      </InputGroupAddon>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {copied === "slack-invite" ? "Copied" : "Copy command"}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <InputGroupAddon
+                      align="inline-end"
+                      aria-label="Copy Slack invite command"
+                      onClick={onCopy}
+                    >
+                      {copied ? <CheckIcon /> : <CopyIcon />}
+                    </InputGroupAddon>
+                  </TooltipTrigger>
+                  <TooltipContent>{copied ? "Copied" : "Copy command"}</TooltipContent>
+                </Tooltip>
               </InputGroup>
               <FieldDescription>
                 Run this command in each channel that should receive incidents.
               </FieldDescription>
             </Field>
-
-            {slackStatus?.workspace?.status_reason && (
-              <Alert variant="destructive">
-                <AlertDescription>
-                  {formatLabel(slackStatus.workspace.status_reason)}
-                </AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-        ) : null}
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex flex-col gap-1">
-              <CardTitle>PostHog</CardTitle>
-              <CardDescription>
-                Receive error tracking alerts, exception events, and product signals as Bella
-                incidents.
-              </CardDescription>
-            </div>
-            <Badge variant={posthog ? "secondary" : "outline"}>
-              {posthog ? "Connected" : "Not connected"}
-            </Badge>
           </div>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-5">
-          {loading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Spinner />
-              Loading integrations
-            </div>
-          ) : (
-            <>
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="posthog-webhook-url">Webhook URL</FieldLabel>
-                  <div className="flex gap-2">
-                    <Input id="posthog-webhook-url" value={webhookUrl} readOnly />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => void copy("url", webhookUrl)}
-                    >
-                      {copied === "url" ? (
-                        <CheckIcon data-icon="inline-start" />
-                      ) : (
-                        <CopyIcon data-icon="inline-start" />
-                      )}
-                      Copy
-                    </Button>
-                  </div>
-                  <FieldDescription>
-                    Set this as the HTTP webhook destination in PostHog. For deployed self-hosting,
-                    set NEXT_PUBLIC_BELLA_PUBLIC_API_URL to your public API origin.
-                  </FieldDescription>
-                </Field>
-
-                <Field>
-                  <FieldLabel htmlFor="posthog-secret">Webhook secret</FieldLabel>
-                  <div className="flex gap-2">
-                    <Input
-                      id="posthog-secret"
-                      value={
-                        connection?.webhook_secret ??
-                        (posthog?.credential_fingerprint
-                          ? `Saved, fingerprint ${posthog.credential_fingerprint}`
-                          : "Connect PostHog to generate a secret")
-                      }
-                      readOnly
-                    />
-                    {connection?.webhook_secret && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => void copy("secret", connection.webhook_secret)}
-                      >
-                        {copied === "secret" ? (
-                          <CheckIcon data-icon="inline-start" />
-                        ) : (
-                          <CopyIcon data-icon="inline-start" />
-                        )}
-                        Copy
-                      </Button>
-                    )}
-                  </div>
-                  <FieldDescription>
-                    Send this as Authorization: Bearer, X-Bella-Webhook-Secret, or
-                    X-PostHog-Webhook-Secret. The full secret is shown only when generated or
-                    rotated.
-                  </FieldDescription>
-                </Field>
-              </FieldGroup>
-
-              <div className="rounded-lg bg-muted p-4 text-sm">
-                <p className="font-medium">PostHog setup</p>
-                <ol className="mt-2 list-decimal pl-5 text-muted-foreground">
-                  <li>Create an error tracking alert or realtime destination.</li>
-                  <li>Choose HTTP webhook as the destination.</li>
-                  <li>Paste the webhook URL above.</li>
-                  <li>Add the secret as a bearer token or webhook header.</li>
-                  <li>Trigger a test alert and check Bella Incidents.</li>
-                </ol>
-              </div>
-            </>
-          )}
-        </CardContent>
-        <CardFooter className="justify-between gap-3">
-          <Button asChild variant="ghost" size="sm">
-            <a
-              href="https://posthog.com/docs/error-tracking/alerts"
-              target="_blank"
-              rel="noreferrer"
-            >
-              <ExternalLinkIcon data-icon="inline-start" />
-              PostHog alert docs
-            </a>
-          </Button>
-          <Button onClick={() => void connectPosthog()} disabled={connecting}>
-            {connecting ? (
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {item.capabilities.map((capability) => (
+              <Badge key={capability} variant="outline">
+                {capability}
+              </Badge>
+            ))}
+          </div>
+        )}
+        <div>
+          <Button type="button" variant={connected ? "outline" : "default"} onClick={onInstall}>
+            {installing ? (
               <Spinner data-icon="inline-start" />
-            ) : posthog ? (
-              <RotateCcwIcon data-icon="inline-start" />
-            ) : null}
-            {posthog ? "Rotate secret" : "Connect PostHog"}
+            ) : (
+              <ExternalLinkIcon data-icon="inline-start" />
+            )}
+            {connected ? "Reconnect" : "Install Slack"}
           </Button>
-        </CardFooter>
-      </Card>
-    </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
-function formatLabel(value: string) {
-  return value
-    .split("_")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+function IntegrationCard({
+  item,
+  integration,
+}: {
+  item: IntegrationCatalogItem;
+  integration: Integration | undefined;
+}) {
+  const configured = Boolean(integration);
+  const apiConfigured = Boolean(integration?.api_token_fingerprint);
+  const webhookConfigured = Boolean(integration?.credential_fingerprint);
+  const needsAttention =
+    item.id === "posthog" && configured && (!apiConfigured || !webhookConfigured);
+  const statusLabel =
+    item.state === "planned"
+      ? "Planned"
+      : needsAttention
+        ? "Needs setup"
+        : configured
+          ? "Connected"
+          : "Not connected";
+  const actionLabel = configured ? (needsAttention ? "Review setup" : "Configure") : "Connect";
+
+  return (
+    <Card className="flex min-h-56 flex-col">
+      <CardHeader>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <IntegrationIcon integration={item.id} name={item.name} />
+            <div className="flex flex-col gap-1">
+              <CardTitle>{item.name}</CardTitle>
+              <CardDescription>{item.description}</CardDescription>
+            </div>
+          </div>
+          <Badge variant={needsAttention ? "destructive" : configured ? "secondary" : "outline"}>
+            {statusLabel}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-1 flex-col justify-between gap-5">
+        <div className="flex flex-wrap gap-2">
+          {item.capabilities.map((capability) => (
+            <Badge key={capability} variant="outline">
+              {capability}
+            </Badge>
+          ))}
+        </div>
+
+        {item.id === "posthog" ? (
+          <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+            <div>Webhook {webhookConfigured ? "configured" : "not configured"}</div>
+            <div>API sync {apiConfigured ? "configured" : "needs token"}</div>
+            <div className="sm:col-span-2">
+              Last updated {formatDateTime(integration?.updated_at)}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <ClockIcon />
+            {item.plannedSummary}
+          </div>
+        )}
+
+        <div>
+          {item.href ? (
+            <Button asChild variant={configured ? "outline" : "default"}>
+              <Link href={item.href}>
+                {actionLabel}
+                <ArrowRightIcon data-icon="inline-end" />
+              </Link>
+            </Button>
+          ) : (
+            <Button variant="outline" disabled>
+              Coming soon
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatDateTime(value: string | undefined) {
+  if (!value) return "never";
+  return new Date(value).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }

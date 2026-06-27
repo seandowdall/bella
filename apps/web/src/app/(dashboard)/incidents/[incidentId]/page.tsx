@@ -3,27 +3,50 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeftIcon, ClockIcon, RadioIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  CheckCircle2Icon,
+  ClockIcon,
+  EyeIcon,
+  FlagIcon,
+  RadioIcon,
+  ShieldCheckIcon,
+  WrenchIcon,
+} from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
-import { getIncident } from "@/lib/api";
+import { getIncident, updateIncidentStatus } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import type {
   IncidentDetail,
   IncidentEventDetail,
   IncidentSeverity,
+  IncidentStatus,
   SignalDetail,
 } from "@/lib/dashboard-types";
+
+const lifecycleActions: {
+  status: IncidentStatus;
+  label: string;
+  icon: typeof ShieldCheckIcon;
+}[] = [
+  { status: "acknowledged", label: "Acknowledge", icon: ShieldCheckIcon },
+  { status: "investigating", label: "Investigating", icon: EyeIcon },
+  { status: "mitigated", label: "Mitigated", icon: WrenchIcon },
+  { status: "resolved", label: "Resolved", icon: CheckCircle2Icon },
+  { status: "follow_up", label: "Follow-up", icon: FlagIcon },
+];
 
 export default function IncidentDetailPage() {
   const params = useParams<{ incidentId: string }>();
   const { selectedOrganization } = useAuth();
   const [incident, setIncident] = useState<IncidentDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [transitioning, setTransitioning] = useState<IncidentStatus | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -54,6 +77,25 @@ export default function IncidentDetailPage() {
       cancelled = true;
     };
   }, [params.incidentId, selectedOrganization]);
+
+  const changeStatus = async (status: IncidentStatus) => {
+    if (!selectedOrganization || !incident) return;
+    setTransitioning(status);
+    setError("");
+    try {
+      setIncident(
+        await updateIncidentStatus({
+          organizationId: selectedOrganization.id,
+          incidentId: incident.id,
+          status,
+        }),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update incident status.");
+    } finally {
+      setTransitioning(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -134,7 +176,7 @@ export default function IncidentDetailPage() {
         <Card className="h-fit">
           <CardHeader>
             <CardTitle>Incident state</CardTitle>
-            <CardDescription>The minimal record future workers will consume.</CardDescription>
+            <CardDescription>Responder state for the dogfood incident candidate.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3 text-sm">
             <DetailRow label="Status" value={formatLabel(incident.status)} />
@@ -146,6 +188,30 @@ export default function IncidentDetailPage() {
               label="Resolved"
               value={incident.resolved_at ? formatDate(incident.resolved_at) : "Open"}
             />
+            <Separator />
+            <div className="flex flex-col gap-2">
+              {lifecycleActions.map((action) => {
+                const Icon = action.icon;
+                const active = incident.status === action.status;
+                return (
+                  <Button
+                    key={action.status}
+                    type="button"
+                    variant={active ? "secondary" : "outline"}
+                    className="justify-start"
+                    disabled={active || transitioning !== null}
+                    onClick={() => void changeStatus(action.status)}
+                  >
+                    {transitioning === action.status ? (
+                      <Spinner data-icon="inline-start" />
+                    ) : (
+                      <Icon data-icon="inline-start" />
+                    )}
+                    {action.label}
+                  </Button>
+                );
+              })}
+            </div>
             <Separator />
             <pre className="max-h-80 overflow-auto rounded-lg bg-muted p-3 text-xs">
               {JSON.stringify(incident.metadata, null, 2)}

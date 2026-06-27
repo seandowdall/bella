@@ -1,5 +1,6 @@
 pub mod credentials;
 pub mod openai;
+pub mod posthog;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
