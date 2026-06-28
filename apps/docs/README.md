@@ -13,6 +13,7 @@
 ## Self-Hosting
 
 - [Configure GitHub OAuth](self-hosting/github-oauth.md)
+- [Configure the GitHub App integration](self-hosting/github-app.md)
 - [Configure Slack incident delivery](self-hosting/slack.md)
 
 ## Ingestion

@@ -2,6 +2,7 @@ mod agent;
 mod agent_settings;
 mod auth;
 mod credentials;
+mod github_integration;
 mod incidents;
 mod integrations;
 mod organizations;
@@ -21,6 +22,7 @@ use axum::{
     routing::{get, patch, post},
 };
 use bella_db::DbPool;
+use bella_github::{GithubAppConfig, GithubClient};
 use bella_slack::{SlackClient, SlackConfig};
 use serde::Serialize;
 use std::{env, net::SocketAddr, sync::Arc};
@@ -34,6 +36,7 @@ struct AppState {
     config: Config,
     credential_cipher: credentials::CredentialCipher,
     provider_client: reqwest::Client,
+    github_client: Option<GithubClient>,
     slack_client: Option<SlackClient>,
 }
 
@@ -46,6 +49,7 @@ struct Config {
     web_url: String,
     secure_cookies: bool,
     openai_base_url: String,
+    github_app: Option<GithubAppConfig>,
     slack: Option<SlackConfig>,
     #[allow(dead_code)]
     slack_cloud: Option<SlackCloudConfig>,
@@ -155,6 +159,7 @@ impl Config {
             anyhow::bail!("BELLA_SECURE_COOKIES must be true when BELLA_PUBLIC_API_URL uses HTTPS");
         }
 
+        let github_app = GithubAppConfig::from_env()?;
         let slack = SlackConfig::from_env()?;
         let slack_cloud = SlackCloudConfig::from_env()?;
         let allowed_origins = parse_origin_allowlist(&web_url)?;
@@ -167,6 +172,7 @@ impl Config {
             web_url,
             secure_cookies,
             openai_base_url,
+            github_app,
             slack,
             slack_cloud,
             posthog_webhook_secret,
@@ -306,6 +312,10 @@ async fn main() -> anyhow::Result<()> {
         .slack
         .as_ref()
         .map(|slack_config| SlackClient::new(provider_client.clone(), slack_config.clone()));
+    let github_client = config
+        .github_app
+        .as_ref()
+        .map(|github_config| GithubClient::new(provider_client.clone(), github_config.clone()));
 
     let db = bella_db::connect(&database_url).await?;
     bella_db::run_migrations(&db).await?;
@@ -315,6 +325,7 @@ async fn main() -> anyhow::Result<()> {
         config,
         credential_cipher,
         provider_client,
+        github_client,
         slack_client,
     };
     let cors = CorsLayer::new()
@@ -346,6 +357,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/auth/github/callback", get(auth::callback))
         .route("/v1/slack/oauth/callback", get(slack::oauth_callback))
         .route("/v1/slack/events", post(slack::events))
+        .route(
+            "/v1/integrations/github/callback",
+            get(github_integration::callback),
+        )
+        .route("/v1/github/webhook", post(github_integration::webhook))
         .route("/v1/auth/logout", post(auth::logout))
         .route("/v1/auth/token/revoke", post(auth::revoke_token))
         .route("/v1/auth/cli/start", post(auth::cli_start))
@@ -407,6 +423,18 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/organizations/:organization_id/integrations/posthog/webhook-secret/rotate",
             post(integrations::rotate_posthog_webhook_secret),
+        )
+        .route(
+            "/v1/organizations/:organization_id/integrations/github/start",
+            get(github_integration::start),
+        )
+        .route(
+            "/v1/organizations/:organization_id/integrations/github/repositories",
+            get(github_integration::repositories),
+        )
+        .route(
+            "/v1/organizations/:organization_id/integrations/github",
+            axum::routing::delete(github_integration::disconnect),
         )
         .route(
             "/v1/organizations/:organization_id/agent/messages",

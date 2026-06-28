@@ -249,6 +249,22 @@ export type Integration = {
   updated_at: string;
 };
 
+export type GithubRepository = {
+  id: string;
+  github_repository_id: number;
+  full_name: string;
+  private: boolean;
+  default_branch: string;
+  html_url: string;
+  selected: boolean;
+  updated_at: string;
+};
+
+export type GithubRepositories = {
+  repositories: GithubRepository[];
+  refreshed_at: string;
+};
+
 export type PosthogSecretRotation = {
   integration: Integration;
   webhook_secret: string;

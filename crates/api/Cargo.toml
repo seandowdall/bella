@@ -12,6 +12,7 @@ axum-extra.workspace = true
 base64.workspace = true
 bella-core.workspace = true
 bella-db.workspace = true
+bella-github.workspace = true
 bella-ingestion.workspace = true
 bella-slack.workspace = true
 chrono.workspace = true

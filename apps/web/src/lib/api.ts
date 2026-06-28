@@ -6,6 +6,7 @@ import type {
   IncidentDetail,
   IncidentListItem,
   IncidentStatus,
+  GithubRepositories,
   Integration,
   PosthogConnectionCheck,
   PosthogSecretRotation,
@@ -475,6 +476,38 @@ export async function syncPosthogIntegration(organizationId: string): Promise<Po
     throw new Error(await errorMessage(response, "Could not sync PostHog signals."));
   }
   return response.json() as Promise<PosthogSyncOutcome>;
+}
+
+export function getGithubInstallUrl(organizationId: string): string {
+  const returnTo = `${window.location.origin}/integrations/github`;
+  return `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/github/start?return_to=${encodeURIComponent(returnTo)}`;
+}
+
+export async function getGithubRepositories(organizationId: string): Promise<GithubRepositories> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/github/repositories`,
+    {
+      credentials: "include",
+      timeoutMs: 20_000,
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not load GitHub repositories."));
+  }
+  return response.json() as Promise<GithubRepositories>;
+}
+
+export async function deleteGithubIntegration(organizationId: string): Promise<void> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/v1/organizations/${organizationId}/integrations/github`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Could not disconnect GitHub."));
+  }
 }
 
 export async function sendAgentMessage({
