@@ -190,6 +190,34 @@ fn rate_limit_policy(method: &Method, path: &str) -> Option<RateLimitPolicy> {
             window: Duration::from_secs(60),
         });
     }
+    if path == "/v1/integrations/github/callback" {
+        return Some(RateLimitPolicy {
+            name: "github_install_callback",
+            limit: 60,
+            window: Duration::from_secs(60),
+        });
+    }
+    if method == Method::GET && path.ends_with("/integrations/github/start") {
+        return Some(RateLimitPolicy {
+            name: "github_install_start",
+            limit: 20,
+            window: Duration::from_secs(300),
+        });
+    }
+    if method == Method::GET && path.ends_with("/integrations/github/repositories") {
+        return Some(RateLimitPolicy {
+            name: "github_repositories_refresh",
+            limit: 20,
+            window: Duration::from_secs(300),
+        });
+    }
+    if method == Method::POST && path == "/v1/github/webhook" {
+        return Some(RateLimitPolicy {
+            name: "github_webhook",
+            limit: 600,
+            window: Duration::from_secs(60),
+        });
+    }
     if method == Method::POST && path == "/v1/auth/cli/start" {
         return Some(RateLimitPolicy {
             name: "auth_cli_start",
@@ -226,6 +254,13 @@ fn rate_limit_policy(method: &Method, path: &str) -> Option<RateLimitPolicy> {
         });
     }
     if method == Method::DELETE && path.ends_with("/integrations/posthog") {
+        return Some(RateLimitPolicy {
+            name: "integration_write",
+            limit: 20,
+            window: Duration::from_secs(300),
+        });
+    }
+    if method == Method::DELETE && path.ends_with("/integrations/github") {
         return Some(RateLimitPolicy {
             name: "integration_write",
             limit: 20,
@@ -372,6 +407,20 @@ mod tests {
     #[test]
     fn rate_limits_expensive_routes() {
         assert!(rate_limit_policy(&Method::POST, "/v1/auth/cli/start").is_some());
+        assert!(
+            rate_limit_policy(
+                &Method::GET,
+                "/v1/organizations/00000000-0000-0000-0000-000000000000/integrations/github/start"
+            )
+            .is_some()
+        );
+        assert!(
+            rate_limit_policy(
+                &Method::GET,
+                "/v1/organizations/00000000-0000-0000-0000-000000000000/integrations/github/repositories"
+            )
+            .is_some()
+        );
         assert!(
             rate_limit_policy(
                 &Method::POST,

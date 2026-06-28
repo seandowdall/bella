@@ -44,6 +44,14 @@ const catalog: IntegrationCatalogItem[] = [
     state: "available",
   },
   {
+    id: "github",
+    name: "GitHub",
+    description: "Install Bella as a GitHub App so agents can read repo context and open PRs.",
+    href: "/integrations/github",
+    capabilities: ["Repositories", "Pull requests", "Agent context"],
+    state: "available",
+  },
+  {
     id: "sentry",
     name: "Sentry",
     description: "Ingest issue regressions, releases, and error spikes from Sentry projects.",
@@ -322,6 +330,14 @@ function IntegrationCard({
           <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
             <div>Webhook {webhookConfigured ? "configured" : "not configured"}</div>
             <div>API sync {apiConfigured ? "configured" : "needs token"}</div>
+            <div className="sm:col-span-2">
+              Last updated {formatDateTime(integration?.updated_at)}
+            </div>
+          </div>
+        ) : item.id === "github" ? (
+          <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+            <div>App {configured ? "installed" : "not installed"}</div>
+            <div>PR access {configured ? "available" : "needs install"}</div>
             <div className="sm:col-span-2">
               Last updated {formatDateTime(integration?.updated_at)}
             </div>

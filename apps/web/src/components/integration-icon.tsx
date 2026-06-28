@@ -3,6 +3,10 @@ import { CableIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const integrationIcons: Record<string, string | { light: string; dark: string }> = {
+  github: {
+    light: "/integrations/github-dark.svg",
+    dark: "/integrations/github.svg",
+  },
   linear: "/integrations/linear.svg",
   posthog: "/integrations/posthog.svg",
   sentry: {

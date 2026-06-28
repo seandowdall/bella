@@ -116,6 +116,7 @@ Full setup guides:
 - [Bella CLI beta](apps/docs/cli-beta.md)
 - [Contributor OAuth setup](apps/docs/contributors/github-oauth.md)
 - [Self-hosted OAuth setup](apps/docs/self-hosting/github-oauth.md)
+- [GitHub App integration](apps/docs/self-hosting/github-app.md)
 - [Self-hosted Slack incident delivery](apps/docs/self-hosting/slack.md)
 - [Slack Cloud QA deployment](apps/docs/deployment/slack-cloud-qa.md)
 - [OpenAI ingestion](apps/docs/ingestion/openai.md)
